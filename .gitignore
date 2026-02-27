@@ -1,0 +1,21 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# CDK
+cdk.out/
+*.js.map
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
