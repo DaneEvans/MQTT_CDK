@@ -1,5 +1,5 @@
 {
-  "app": "python app.py",
+  "app": "npx ts-node --prefer-ts-exts bin/mqtt_cdk.ts",
   "watch": {
     "include": [
       "**"

@@ -1,6 +1,6 @@
 # MQTT_CDK
 
-A Python AWS CDK project that provisions a small EC2 instance with a fixed Elastic IP address running the [Mosquitto](https://mosquitto.org/) MQTT broker.
+A TypeScript AWS CDK project that provisions a small EC2 instance with a fixed Elastic IP address running the [Mosquitto](https://mosquitto.org/) MQTT broker.
 
 ## What gets deployed
 
@@ -20,9 +20,9 @@ Stack outputs include the Elastic IP and the full `mqtt://…:1883` endpoint.
 
 | Tool | Install |
 |---|---|
+| Node.js 18+ | [nodejs.org](https://nodejs.org/) |
 | AWS CLI | [docs.aws.amazon.com/cli](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) |
 | AWS CDK v2 | `npm install -g aws-cdk` |
-| Python 3.9+ | [python.org](https://www.python.org/downloads/) |
 
 Configure your AWS credentials before deploying:
 
@@ -34,7 +34,7 @@ aws configure
 
 ## Quickstart (GitHub Codespaces)
 
-This repository includes a [Dev Container](.devcontainer/devcontainer.json) that automatically installs the AWS CDK, AWS CLI, and all Python dependencies.
+This repository includes a [Dev Container](.devcontainer/devcontainer.json) that automatically installs the AWS CDK, AWS CLI, and all Node.js dependencies.
 
 1. Click **Code → Open with Codespaces** in GitHub.
 2. Once the Codespace is ready, configure your AWS credentials:
@@ -64,12 +64,8 @@ This repository includes a [Dev Container](.devcontainer/devcontainer.json) that
 git clone https://github.com/DaneEvans/MQTT_CDK.git
 cd MQTT_CDK
 
-# Create and activate a virtual environment
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate.bat
-
 # Install dependencies
-pip install -r requirements.txt
+npm install
 
 # Bootstrap (first time per account/region)
 cdk bootstrap
@@ -84,6 +80,8 @@ cdk deploy
 
 | Command | Description |
 |---|---|
+| `npm run build` | Compile TypeScript |
+| `npm run watch` | Watch and recompile on change |
 | `cdk ls` | List all stacks |
 | `cdk synth` | Synthesise CloudFormation template |
 | `cdk diff` | Compare deployed stack with current code |
@@ -95,8 +93,7 @@ cdk deploy
 ## Testing
 
 ```bash
-pip install -r requirements-dev.txt
-python -m pytest tests/ -v
+npm test
 ```
 
 ---
@@ -118,3 +115,4 @@ mosquitto_pub -h 1.2.3.4 -t test/hello -m "Hello MQTT"
 ```
 
 > **Note:** For production use, restrict the SSH security-group rule to your own IP, enable TLS on port 8883, and disable anonymous access in `/etc/mosquitto/conf.d/default.conf`.
+

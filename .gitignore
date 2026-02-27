@@ -1,16 +1,13 @@
-# Python
-.venv/
-__pycache__/
-*.pyc
-*.pyo
-*.egg-info/
+# Node / TypeScript
+node_modules/
 dist/
-build/
-.eggs/
+*.js
+*.js.map
+*.d.ts
+!jest.config.js
 
 # CDK
 cdk.out/
-*.js.map
 
 # IDE
 .idea/

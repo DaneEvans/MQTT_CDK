@@ -1,23 +1,22 @@
 {
-  "name": "MQTT CDK (Python)",
-  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "name": "MQTT CDK (TypeScript)",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:1-20",
   "features": {
-    "ghcr.io/devcontainers/features/node:1": {
-      "version": "lts"
-    },
     "ghcr.io/devcontainers/features/aws-cli:1": {}
   },
-  "postCreateCommand": "npm install -g aws-cdk && pip install -r requirements.txt && pip install -r requirements-dev.txt",
+  "postCreateCommand": "npm install && npm install -g aws-cdk",
   "customizations": {
     "vscode": {
       "extensions": [
-        "ms-python.python",
-        "ms-python.vscode-pylance",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
         "amazonwebservices.aws-toolkit-vscode"
       ],
       "settings": {
-        "python.defaultInterpreterPath": "/usr/local/bin/python"
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
       }
     }
   }
 }
+
