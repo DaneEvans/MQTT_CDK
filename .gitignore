@@ -1,0 +1,18 @@
+# Node / TypeScript
+node_modules/
+dist/
+*.js
+*.js.map
+*.d.ts
+!jest.config.js
+
+# CDK
+cdk.out/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
