@@ -16,3 +16,6 @@ cdk.out/
 
 # OS
 .DS_Store
+
+#Dotfiles 
+.dotfiles/

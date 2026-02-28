@@ -1,0 +1,8 @@
+The EC2 didn't seem to have mosquitto on it.
+
+- [x] fix that
+- [x] ensure I can get data to it.
+- [x] once it's there I can move it around easily enough.
+- [ ] Improve security
+  - [ ] add user&pwd to mosquitto
+  - [ ] Check what I can do on the AWS end to reduce risk
