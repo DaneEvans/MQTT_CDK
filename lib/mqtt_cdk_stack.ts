@@ -2,6 +2,8 @@ import * as cdk from "aws-cdk-lib";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as iam from "aws-cdk-lib/aws-iam";
 import { Construct } from "constructs";
+import * as fs from "fs";
+import * as path from "path";
 
 /**
  * CDK Stack that provisions:
@@ -14,6 +16,12 @@ import { Construct } from "constructs";
 export class MqttCdkStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
+
+    // ── Load MQTT credentials from config ──────────────────────────────────
+    const configPath = path.join(__dirname, "..", "config.json");
+    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    const mqttUsername = config.mqtt?.username || "meshdev";
+    const mqttPassword = config.mqtt?.password || "large4cats";
 
     // ── VPC ────────────────────────────────────────────────────────────────
     const vpc = new ec2.Vpc(this, "MqttVpc", {
@@ -36,11 +44,11 @@ export class MqttCdkStack extends cdk.Stack {
     });
 
     // SSH – restrict to your own IP in production
-    sg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(22), "SSH");
+    // sg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(22), "SSH");
     // MQTT plain-text
     sg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(1883), "MQTT");
     // MQTT over TLS (optional, useful for future use)
-    sg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(8883), "MQTT TLS");
+    // sg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(8883), "MQTT TLS");
 
     // ── IAM Role for SSM Session Manager access ──────────────────────────────
     const role = new iam.Role(this, "MqttInstanceRole", {
@@ -60,14 +68,27 @@ export class MqttCdkStack extends cdk.Stack {
       // Enable EPEL and install mosquitto
       "amazon-linux-extras install epel -y",
       "yum install -y mosquitto",
-      // Allow anonymous connections on the default listener
-      "cat > /etc/mosquitto/conf.d/default.conf <<'EOF'",
-      "listener 1883",
-      "allow_anonymous true",
+      // Stop mosquitto if it auto-started
+      "systemctl stop mosquitto || true",
+      // Create password file for mosquitto
+      `mosquitto_passwd -c -b /etc/mosquitto/passwd ${mqttUsername} ${mqttPassword}`,
+      // Ensure required directories exist
+      "mkdir -p /var/lib/mosquitto",
+      // Configure mosquitto to require authentication
+      "cat > /etc/mosquitto/mosquitto.conf <<'EOF'",
+      "pid_file /var/run/mosquitto.pid",
+      "persistence true",
+      "persistence_location /var/lib/mosquitto/",
+      "log_dest syslog",
+      "listener 1883 0.0.0.0",
+      "allow_anonymous false",
+      "password_file /etc/mosquitto/passwd",
       "EOF",
+      "chown mosquitto:mosquitto /etc/mosquitto/passwd /var/lib/mosquitto || true",
+      "chmod 640 /etc/mosquitto/passwd",
       // Enable and start the service
       "systemctl enable mosquitto",
-      "systemctl start mosquitto",
+      "systemctl restart mosquitto",
     );
 
     // ── EC2 instance ────────────────────────────────────────────────────────
@@ -84,6 +105,8 @@ export class MqttCdkStack extends cdk.Stack {
       role,
       // IMDSv2 required for better security
       requireImdsv2: true,
+      // Force instance replacement when user data changes
+      userDataCausesReplacement: true,
     });
 
     // ── Elastic IP (fixed public IP) ────────────────────────────────────────
@@ -123,6 +146,10 @@ export class MqttCdkStack extends cdk.Stack {
       value: "sudo tail -f /var/log/cloud-init-output.log",
       description:
         "Command to check installation logs on the instance (SSH or SSM)",
+    });
+    new cdk.CfnOutput(this, "MqttUsername", {
+      value: mqttUsername,
+      description: "MQTT broker username",
     });
   }
 }

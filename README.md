@@ -108,11 +108,14 @@ MqttCdkStack.MqttPublicIp      = 1.2.3.4
 MqttCdkStack.MqttBrokerEndpoint = mqtt://1.2.3.4:1883
 ```
 
-Use any MQTT client to connect, for example with `mosquitto_pub`:
+Use any MQTT client to connect with credentials from `config.json`, for example with `mosquitto_pub`:
 
 ```bash
 # Send a message
-mosquitto_pub -h 1.2.3.4 -t test/hello -m "Hello MQTT"
+mosquitto_pub -h 1.2.3.4 -t test/hello -m "Hello MQTT" -u meshdev -P large4cats
+
+# Subscribe to all topics
+mosquitto_sub -h 1.2.3.4 -t '#' -v -u meshdev -P large4cats
 ```
 
 > **Note:** For production use, restrict the SSH security-group rule to your own IP, enable TLS on port 8883, and disable anonymous access in `/etc/mosquitto/conf.d/default.conf`.
@@ -123,14 +126,14 @@ using mosquitto
 To subscribe (everything)
 
 ```
-mosquitto_sub -h 54.252.83.244 -t '#' -v
+mosquitto_sub -h 54.252.83.244 -t '#' -v -u meshdev -P large4cats
 ```
 
 Meshtastic settings:
 MQTT enabled - true
 Address - <ip address>:1883
-username - ''
-pwd - ''
+username - 'meshdev'
+pwd - 'large4cats'
 
 Meshtastic seems to connect to it fine, but it appears to be in a binary format, but the text is visible within it. It doesn't want to forward other nodes packets yet - trying moving it to a router_late to fix that ??
 Nope, not that. Need 'Settings - Lora - Ok to MQTT' on the sending device.

@@ -19,3 +19,6 @@ cdk.out/
 
 #Dotfiles 
 .dotfiles/
+
+# Config (contains credentials)
+config.json
