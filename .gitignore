@@ -5,6 +5,7 @@ dist/
 *.js.map
 *.d.ts
 !jest.config.js
+!lambda/**/*.py
 
 # CDK
 cdk.out/

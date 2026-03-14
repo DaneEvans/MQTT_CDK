@@ -1,18 +1,21 @@
 # MQTT_CDK
 
-A TypeScript AWS CDK project that provisions a small EC2 instance with a fixed Elastic IP address running the [Mosquitto](https://mosquitto.org/) MQTT broker.
+A TypeScript AWS CDK project that provisions a small EC2 instance with a fixed Elastic IP address running the [Mosquitto](https://mosquitto.org/) MQTT broker, plus low-cost latest-position storage and read APIs.
 
 ## What gets deployed
 
-| Resource           | Details                                                                                     |
-| ------------------ | ------------------------------------------------------------------------------------------- |
-| **VPC**            | Single-AZ public VPC (no NAT gateway)                                                       |
-| **EC2 instance**   | `t3.micro`, Amazon Linux 2                                                                  |
-| **Elastic IP**     | Fixed public IP address attached to the instance                                            |
-| **Security group** | Inbound: SSH (22), MQTT (1883), MQTT-TLS (8883)                                             |
-| **Mosquitto**      | Installed via EPEL (`amazon-linux-extras` + `yum`), listening on port 1883 (anonymous mode) |
+| Resource           | Details                                                                                       |
+| ------------------ | --------------------------------------------------------------------------------------------- |
+| **VPC**            | Single-AZ public VPC (no NAT gateway)                                                         |
+| **EC2 instance**   | `t3.micro`, Amazon Linux 2                                                                    |
+| **Elastic IP**     | Fixed public IP address attached to the instance                                              |
+| **Security group** | Inbound: SSH (22), MQTT (1883), MQTT-TLS (8883)                                               |
+| **Mosquitto**      | Installed via EPEL (`amazon-linux-extras` + `yum`), listening on port 1883 (anonymous mode)   |
+| **Ingest worker**  | Python systemd service on EC2; filters one channel and stores only latest position per sender |
+| **DynamoDB**       | `PAY_PER_REQUEST` table keyed by `senderId` for latest position records                       |
+| **Lambda URL API** | Serverless GET endpoints for keys, all latest positions, and position-by-sender               |
 
-Stack outputs include the Elastic IP and the full `mqtt://…:1883` endpoint.
+Stack outputs include the MQTT endpoint plus API URLs.
 
 ---
 
@@ -98,6 +101,100 @@ npm test
 
 ---
 
+## Configuration
+
+Set MQTT credentials and channel filter in `config.json`:
+
+```json
+{
+  "mqtt": {
+    "username": "meshdev",
+    "password": "large4cats"
+  },
+  "ingest": {
+    "allowedChannel": "ANZ"
+  },
+  "api": {
+    "key": "replace-with-strong-api-key"
+  }
+}
+```
+
+Only packets from `ingest.allowedChannel` are considered for storage.
+The ingest worker stores only packets it can parse as JSON position data.
+
+`ingest.logLevel` controls worker verbosity (`INFO` recommended, `DEBUG` for deep troubleshooting).
+
+---
+
+## Meshtastic Payload Reality
+
+Meshtastic MQTT traffic is not always plain JSON:
+
+- You may see binary/protobuf payloads on many topics, especially with encrypted packets.
+- Meshtastic topics containing `/e/` are encrypted frames; they are expected to be binary and not JSON.
+- This stack currently ingests JSON-decodable packets only.
+- If a payload is binary or not JSON, it is dropped and logged as `non-json payload dropped`.
+- Position detection currently accepts payloads where one of these is true:
+  - `type == position`
+  - `portnum == position_app`
+  - a `position` object exists
+  - direct lat/lon fields exist (`lat`, `lon`, `latitude`, `longitude`, `latitudeI`, `longitudeI`)
+
+So this is not a fake stub, but it is a JSON-first parser and will not decode raw protobuf frames.
+
+---
+
+## Position API
+
+After deployment, use the stack output `PositionsApiBaseUrl` and append one of:
+
+- `GET /positions/keys` - all stored sender IDs
+- `GET /positions/latest` - latest position record for each sender ID
+- `GET /positions/{senderId}` - latest position record for one sender ID
+
+Example:
+
+```bash
+curl -H "x-api-key: <your-api-key>" "https://<function-url-id>.lambda-url.<region>.on.aws/positions/keys"
+curl -H "x-api-key: <your-api-key>" "https://<function-url-id>.lambda-url.<region>.on.aws/positions/latest"
+curl -H "x-api-key: <your-api-key>" "https://<function-url-id>.lambda-url.<region>.on.aws/positions/%21a0cb10f8"
+```
+
+Requests without the `x-api-key` header (or with an invalid key) return `401 Unauthorized`.
+
+---
+
+## Observability
+
+On EC2 (ingest worker):
+
+```bash
+sudo journalctl -u mqtt-ingest -f --no-pager
+```
+
+You should see:
+
+- startup/connect messages
+- periodic stats snapshots (`received`, `stored`, `non_json`, etc.)
+- one log line per successful stored position
+
+If you are not seeing stored positions, look for:
+
+- `non-json payload dropped` (binary/protobuf payloads)
+- high `filtered_channel` counts (wrong channel)
+- `missing_position` / `missing_sender`
+
+For Lambda API logs (CloudWatch), use the stack output `PositionsApiTailCommand` or run:
+
+```bash
+aws logs tail /aws/lambda/mqtt-positions-api --follow
+```
+
+The API now logs request path/method, unauthorized requests, and result counts.
+
+---
+
 ## Connecting to the broker
 
 After `cdk deploy` completes, the stack prints the broker endpoint:
@@ -106,6 +203,7 @@ After `cdk deploy` completes, the stack prints the broker endpoint:
 Outputs:
 MqttCdkStack.MqttPublicIp      = 1.2.3.4
 MqttCdkStack.MqttBrokerEndpoint = mqtt://1.2.3.4:1883
+MqttCdkStack.PositionsApiBaseUrl = https://...
 ```
 
 Use any MQTT client to connect with credentials from `config.json`, for example with `mosquitto_pub`:
