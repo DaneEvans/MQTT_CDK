@@ -4,5 +4,10 @@ The EC2 didn't seem to have mosquitto on it.
 - [x] ensure I can get data to it.
 - [x] once it's there I can move it around easily enough.
 - [ ] Improve security
-  - [ ] add user&pwd to mosquitto
+  - [x] add user&pwd to mosquitto
   - [ ] Check what I can do on the AWS end to reduce risk
+  - [ ] add a better way to ssh to the EC2
+- [x] set up endpoints
+  - [x] basic ones working, api token to secure it, a bit.
+  - [ ] /latest should include the ID's as well ...
+- [ ] see what things cost (last time .5 / day of dev) with the extra DB / lambdas etc =
