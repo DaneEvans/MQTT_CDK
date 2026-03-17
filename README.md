@@ -163,6 +163,12 @@ curl -H "x-api-key: <your-api-key>" "https://<function-url-id>.lambda-url.<regio
 
 Requests without the `x-api-key` header (or with an invalid key) return `401 Unauthorized`.
 
+For service-to-service integration, use the OpenAPI spec in [openapi/positions-api.openapi.yaml](/workspaces/MQTT_CDK/openapi/positions-api.openapi.yaml).
+
+For a GitHub-friendly rendered version, see [docs/positions-api.md](/workspaces/MQTT_CDK/docs/positions-api.md).
+
+`GET /positions/latest` and `GET /positions/{senderId}` now share the same response shape, including `shortname` and `longname` fields.
+
 ---
 
 ## Observability

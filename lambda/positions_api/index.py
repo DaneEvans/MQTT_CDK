@@ -51,19 +51,16 @@ def _authorized(event):
     return provided == API_KEY
 
 
-def _scan_all_items(table):
+def _scan_all_items(table, projection_expression=None, expression_attribute_names=None):
     items = []
     start_key = None
 
     while True:
-        kwargs = {
-            "ProjectionExpression": "senderId, #channel, #topic, updatedAt, #position",
-            "ExpressionAttributeNames": {
-                "#channel": "channel",
-                "#topic": "topic",
-                "#position": "position",
-            },
-        }
+        kwargs = {}
+        if projection_expression:
+            kwargs["ProjectionExpression"] = projection_expression
+        if expression_attribute_names:
+            kwargs["ExpressionAttributeNames"] = expression_attribute_names
         if start_key:
             kwargs["ExclusiveStartKey"] = start_key
 
@@ -74,6 +71,21 @@ def _scan_all_items(table):
             break
 
     return items
+
+
+def _serialize_position_record(item):
+    return _decimal_to_number(
+        {
+            "senderId": item.get("senderId"),
+            "channel": item.get("channel"),
+            "topic": item.get("topic"),
+            "updatedAt": item.get("updatedAt"),
+            "updatedNodeinfoAt": item.get("updatedNodeinfoAt"),
+            "shortname": item.get("shortname", ""),
+            "longname": item.get("longname", ""),
+            "position": item.get("position"),
+        }
+    )
 
 
 def handler(event, _context):
@@ -105,16 +117,28 @@ def handler(event, _context):
     table = ddb.Table(TABLE_NAME)
 
     if path == "/positions/keys":
-        items = _scan_all_items(table)
+        items = _scan_all_items(table, projection_expression="senderId")
         keys = sorted([item.get("senderId") for item in items if item.get("senderId")])
         logger.info("served keys count=%s", len(keys))
         return _json(200, {"keys": keys})
 
     if path == "/positions/latest":
-        items = _scan_all_items(table)
+        items = _scan_all_items(
+            table,
+            projection_expression=(
+                "senderId, #channel, #topic, updatedAt, updatedNodeinfoAt, "
+                "#position, shortname, longname"
+            ),
+            expression_attribute_names={
+                "#channel": "channel",
+                "#topic": "topic",
+                "#position": "position",
+            },
+        )
         sorted_items = sorted(items, key=lambda i: i.get("updatedAt", 0), reverse=True)
-        logger.info("served latest count=%s", len(sorted_items))
-        return _json(200, {"positions": _decimal_to_number(sorted_items)})
+        serialized_items = [_serialize_position_record(item) for item in sorted_items]
+        logger.info("served latest count=%s", len(serialized_items))
+        return _json(200, {"positions": serialized_items})
 
     if path.startswith("/positions/") and path.count("/") == 2:
         sender_id = path.split("/", 2)[2]
@@ -128,7 +152,7 @@ def handler(event, _context):
             return _json(404, {"error": "senderId not found", "senderId": sender_id})
 
         logger.info("served sender senderId=%s", sender_id)
-        return _json(200, _decimal_to_number(item))
+        return _json(200, _serialize_position_record(item))
 
     logger.info("route not found path=%s", path)
     return _json(
