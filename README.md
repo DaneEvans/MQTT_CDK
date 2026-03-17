@@ -4,16 +4,16 @@ A TypeScript AWS CDK project that provisions a small EC2 instance with a fixed E
 
 ## What gets deployed
 
-| Resource           | Details                                                                                       |
-| ------------------ | --------------------------------------------------------------------------------------------- |
-| **VPC**            | Single-AZ public VPC (no NAT gateway)                                                         |
-| **EC2 instance**   | `t3.micro`, Amazon Linux 2                                                                    |
-| **Elastic IP**     | Fixed public IP address attached to the instance                                              |
-| **Security group** | Inbound: SSH (22), MQTT (1883), MQTT-TLS (8883)                                               |
-| **Mosquitto**      | Installed via EPEL (`amazon-linux-extras` + `yum`), listening on port 1883 (anonymous mode)   |
-| **Ingest worker**  | Python systemd service on EC2; filters one channel and stores only latest position per sender |
-| **DynamoDB**       | `PAY_PER_REQUEST` table keyed by `senderId` for latest position records                       |
-| **API Gateway API** | Serverless GET endpoints for keys, all latest positions, and position-by-sender              |
+| Resource            | Details                                                                                       |
+| ------------------- | --------------------------------------------------------------------------------------------- |
+| **VPC**             | Single-AZ public VPC (no NAT gateway)                                                         |
+| **EC2 instance**    | `t3.micro`, Amazon Linux 2                                                                    |
+| **Elastic IP**      | Fixed public IP address attached to the instance                                              |
+| **Security group**  | Inbound: SSH (22), MQTT (1883), MQTT-TLS (8883)                                               |
+| **Mosquitto**       | Installed via EPEL (`amazon-linux-extras` + `yum`), listening on port 1883 (anonymous mode)   |
+| **Ingest worker**   | Python systemd service on EC2; filters one channel and stores only latest position per sender |
+| **DynamoDB**        | `PAY_PER_REQUEST` table keyed by `senderId` for latest position records                       |
+| **API Gateway API** | Serverless GET endpoints for keys, all latest positions, and position-by-sender               |
 
 Stack outputs include the MQTT endpoint plus API URLs.
 
