@@ -147,6 +147,13 @@ So this is not a fake stub, but it is a JSON-first parser and will not decode ra
 
 ## Position API
 
+Preferred public hostnames:
+
+- MQTT broker: `mqtt.goneepic.com:1883`
+- HTTP API: `https://api.goneepic.com`
+
+After each deploy, confirm those hostnames still route to the latest deployed resources. In practice that means updating VentraIP DNS and any reverse proxy or edge mapping so `mqtt.goneepic.com` points at the current broker endpoint and `api.goneepic.com` points at the current API deployment.
+
 After deployment, use the stack output `PositionsApiBaseUrl` and append one of:
 
 - `GET /positions/keys` - all stored sender IDs
@@ -156,9 +163,9 @@ After deployment, use the stack output `PositionsApiBaseUrl` and append one of:
 Example:
 
 ```bash
-curl -H "x-api-key: <your-api-key>" "https://<function-url-id>.lambda-url.<region>.on.aws/positions/keys"
-curl -H "x-api-key: <your-api-key>" "https://<function-url-id>.lambda-url.<region>.on.aws/positions/latest"
-curl -H "x-api-key: <your-api-key>" "https://<function-url-id>.lambda-url.<region>.on.aws/positions/%21a0cb10f8"
+curl -H "x-api-key: <your-api-key>" "https://api.goneepic.com/positions/keys"
+curl -H "x-api-key: <your-api-key>" "https://api.goneepic.com/positions/latest"
+curl -H "x-api-key: <your-api-key>" "https://api.goneepic.com/positions/%21a0cb10f8"
 ```
 
 Requests without the `x-api-key` header (or with an invalid key) return `401 Unauthorized`.
@@ -167,7 +174,43 @@ For service-to-service integration, use the OpenAPI spec in [openapi/positions-a
 
 For a GitHub-friendly rendered version, see [docs/positions-api.md](/workspaces/MQTT_CDK/docs/positions-api.md).
 
+For an interactive Swagger UI, see [docs/swagger.html](/workspaces/MQTT_CDK/docs/swagger.html). If you want it shareable in a browser, serve the repo over HTTP or enable GitHub Pages from the `docs/` folder.
+
+GitHub Pages deployment is configured in [.github/workflows/pages.yml](/workspaces/MQTT_CDK/.github/workflows/pages.yml). Once Pages is enabled for GitHub Actions in the repository settings, the published site will expose a landing page at `docs/index.html` and the Swagger UI at `docs/swagger.html`.
+
 `GET /positions/latest` and `GET /positions/{senderId}` now share the same response shape, including `shortname` and `longname` fields.
+
+### DNS Updates In VentraIP
+
+Use VentraIP as the public DNS control plane for the consumer-facing hostnames.
+
+For `mqtt.goneepic.com`:
+
+1. Open the domain in VentraIP and go to DNS management.
+2. Find or create the `mqtt` host record.
+3. Set it as an `A` record pointing to the current `MqttPublicIp` output from `cdk deploy`.
+4. Keep the port at `1883` in client configuration; DNS only maps the hostname.
+
+For `api.goneepic.com`:
+
+1. Point `api.goneepic.com` at the public hostname of the layer that terminates TLS for your API.
+2. If you are using CloudFront, API Gateway custom domain mapping, or another reverse proxy in front of the Function URL, create or update the `api` record to target that hostname.
+3. Do not rely on a raw DNS rename to the Lambda Function URL as the final public setup unless your TLS and custom domain mapping are handled correctly upstream.
+
+After each deploy:
+
+1. Check whether `MqttPublicIp` changed. If it did, update the VentraIP `A` record for `mqtt`.
+2. Check whether the API target behind `api.goneepic.com` changed. If it did, update the VentraIP DNS record or edge mapping for `api`.
+3. Verify resolution and connectivity before handing the endpoints to consumers.
+
+Suggested verification:
+
+```bash
+dig +short mqtt.goneepic.com
+dig +short api.goneepic.com
+curl -H "x-api-key: <your-api-key>" "https://api.goneepic.com/testAuth"
+mosquitto_sub -h mqtt.goneepic.com -t '#' -v -u meshdev -P large4cats
+```
 
 ---
 
@@ -212,14 +255,16 @@ MqttCdkStack.MqttBrokerEndpoint = mqtt://1.2.3.4:1883
 MqttCdkStack.PositionsApiBaseUrl = https://...
 ```
 
+Treat those outputs as deployment targets rather than the long-term consumer addresses. After deploy, update your public hostnames so clients can continue using `mqtt.goneepic.com` and `api.goneepic.com`.
+
 Use any MQTT client to connect with credentials from `config.json`, for example with `mosquitto_pub`:
 
 ```bash
 # Send a message
-mosquitto_pub -h 1.2.3.4 -t test/hello -m "Hello MQTT" -u meshdev -P large4cats
+mosquitto_pub -h mqtt.goneepic.com -t test/hello -m "Hello MQTT" -u meshdev -P large4cats
 
 # Subscribe to all topics
-mosquitto_sub -h 1.2.3.4 -t '#' -v -u meshdev -P large4cats
+mosquitto_sub -h mqtt.goneepic.com -t '#' -v -u meshdev -P large4cats
 ```
 
 > **Note:** For production use, restrict the SSH security-group rule to your own IP, enable TLS on port 8883, and disable anonymous access in `/etc/mosquitto/conf.d/default.conf`.

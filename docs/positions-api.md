@@ -4,14 +4,62 @@ Human-readable API reference for service teams consuming the positions API.
 
 Machine-readable spec: [openapi/positions-api.openapi.yaml](/workspaces/MQTT_CDK/openapi/positions-api.openapi.yaml)
 
+Interactive Swagger UI: [docs/swagger.html](/workspaces/MQTT_CDK/docs/swagger.html)
+
+If you enable GitHub Pages from the `docs/` folder, the Swagger page can be shared as a rendered API browser.
+
 ## Base URL
 
-Use the deployed stack output `PositionsApiBaseUrl`.
+Preferred public API hostname:
+
+```text
+https://api.goneepic.com/
+```
+
+Related MQTT broker hostname:
+
+```text
+mqtt.goneepic.com:1883
+```
+
+Use the deployed stack output `PositionsApiBaseUrl` as the deployment target behind `api.goneepic.com`.
+After each deploy, update your DNS or edge routing so `api.goneepic.com` and `mqtt.goneepic.com` still point at the current resources.
 
 Example:
 
 ```text
-https://your-function-id.lambda-url.ap-southeast-2.on.aws/
+https://api.goneepic.com/
+```
+
+## DNS Updates In VentraIP
+
+VentraIP should remain the public DNS source for the consumer-facing hostnames.
+
+For `mqtt.goneepic.com`:
+
+1. Open DNS management for the domain in VentraIP.
+2. Create or update the `mqtt` host as an `A` record.
+3. Set the record value to the latest `MqttPublicIp` from the stack outputs.
+
+For `api.goneepic.com`:
+
+1. Point the `api` host at the public hostname of the component serving TLS for the API.
+2. That may be a CloudFront distribution, API Gateway custom domain target, or another reverse proxy in front of the Function URL.
+3. Do not treat the raw Lambda Function URL as the final public hostname unless custom domain and TLS handling are already in place.
+
+After each deploy:
+
+1. Compare the current stack outputs with the existing VentraIP DNS records.
+2. Update `mqtt.goneepic.com` if the broker Elastic IP changed.
+3. Update `api.goneepic.com` if the API edge target changed.
+4. Re-test both hostnames before sharing them.
+
+Example checks:
+
+```bash
+dig +short mqtt.goneepic.com
+dig +short api.goneepic.com
+curl -H "x-api-key: <your-api-key>" "https://api.goneepic.com/testAuth"
 ```
 
 ## Authentication

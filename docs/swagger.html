@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MQTT Positions API Swagger UI</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css"
+    />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: #f6f8fb;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      .topbar {
+        padding: 14px 20px;
+        background: #0f172a;
+        color: #e2e8f0;
+        border-bottom: 1px solid #1e293b;
+      }
+
+      .topbar a {
+        color: #93c5fd;
+      }
+
+      .topbar p {
+        margin: 6px 0 0;
+        font-size: 14px;
+      }
+
+      #swagger-ui {
+        min-height: calc(100vh - 72px);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="topbar">
+      <strong>MQTT Positions API</strong>
+      <p>
+        Interactive Swagger UI for
+        <a href="./positions-api.openapi.yaml">positions-api.openapi.yaml</a>.
+        Public API hostname: <code>api.goneepic.com</code>. Public MQTT broker:
+        <code>mqtt.goneepic.com</code>. After deploy, update routing so those
+        names still point at the current resources.
+      </p>
+    </div>
+    <div id="swagger-ui"></div>
+    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+    <script>
+      window.ui = SwaggerUIBundle({
+        url: "./positions-api.openapi.yaml",
+        dom_id: "#swagger-ui",
+        deepLinking: true,
+        displayRequestDuration: true,
+        presets: [SwaggerUIBundle.presets.apis],
+        layout: "BaseLayout",
+      });
+    </script>
+  </body>
+</html>
