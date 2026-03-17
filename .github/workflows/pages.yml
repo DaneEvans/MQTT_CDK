@@ -6,7 +6,6 @@ on:
       - main
     paths:
       - docs/**
-      - openapi/**
       - .github/workflows/pages.yml
   workflow_dispatch:
 
@@ -35,7 +34,6 @@ jobs:
           rm -rf _site
           mkdir -p _site
           cp -R docs/. _site/
-          cp openapi/positions-api.openapi.yaml _site/positions-api.openapi.yaml
           touch _site/.nojekyll
 
       - name: Configure GitHub Pages

@@ -7,7 +7,11 @@ The EC2 didn't seem to have mosquitto on it.
   - [x] add user&pwd to mosquitto
   - [ ] Check what I can do on the AWS end to reduce risk
   - [ ] add a better way to ssh to the EC2
+  - [ ] check if it can be done by ipv6 only
 - [x] set up endpoints
   - [x] basic ones working, api token to secure it, a bit.
-  - [ ] /latest should include the ID's as well ...
-- [ ] see what things cost (last time .5 / day of dev) with the extra DB / lambdas etc =
+  - [x] /latest should include the ID's as well ...
+- [x] see what things cost (last time .5 / day of dev) with the extra DB / lambdas etc =
+- [x] add DNS entries to setup mqtt.goneepic.com and api.goneepic.com
+- [x] document the api endpoints for sharing
+  - [x] set up pages.

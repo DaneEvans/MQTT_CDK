@@ -8,6 +8,7 @@ info:
 
     Public hostnames used by consumers:
     - MQTT broker: `mqtt.goneepic.com:1883`
+    - HTTP API: `https://api.goneepic.com`
 
     Authentication is performed with the `x-api-key` header for all routes except
     `GET /test`.
@@ -20,10 +21,10 @@ info:
     - Public DNS is managed in VentraIP for the MQTT broker hostname; after each deploy, update `mqtt.goneepic.com` if the broker endpoint changes.
 servers:
   - url: https://{apiHost}
-    description: API Gateway HTTP API endpoint for the deployed API
+    description: Preferred public API endpoint for consumers
     variables:
       apiHost:
-        default: your-http-api-id.execute-api.ap-southeast-2.amazonaws.com
+        default: api.goneepic.com
 tags:
   - name: Health
     description: Reachability and authentication checks
