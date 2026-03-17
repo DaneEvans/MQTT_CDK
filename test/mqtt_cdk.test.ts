@@ -56,7 +56,7 @@ test("DynamoDB table for latest positions is created", () => {
   });
 });
 
-test("Lambda Function URL for positions API is created", () => {
+test("API Gateway HTTP API for positions API is created", () => {
   const template = buildTemplate();
-  template.resourceCountIs("AWS::Lambda::Url", 1);
+  template.resourceCountIs("AWS::ApiGatewayV2::Api", 1);
 });

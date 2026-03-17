@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   summary: Read-only HTTP API for latest Meshtastic position records
   description: |
-    OpenAPI specification for the Lambda Function URL exposed by this stack.
+    OpenAPI specification for the API Gateway HTTP API exposed by this stack.
 
     Public hostnames used by consumers:
     - MQTT broker: `mqtt.goneepic.com:1883`
@@ -19,11 +19,11 @@ info:
     - `shortname` and `longname` are always present as strings, and default to an empty string when no node metadata has been ingested yet.
     - Public DNS is managed in VentraIP for the MQTT broker hostname; after each deploy, update `mqtt.goneepic.com` if the broker endpoint changes.
 servers:
-  - url: https://{functionUrl}
-    description: Direct Lambda Function URL for the deployed API
+  - url: https://{apiHost}
+    description: API Gateway HTTP API endpoint for the deployed API
     variables:
-      functionUrl:
-        default: your-function-id.lambda-url.ap-southeast-2.on.aws
+      apiHost:
+        default: your-http-api-id.execute-api.ap-southeast-2.amazonaws.com
 tags:
   - name: Health
     description: Reachability and authentication checks

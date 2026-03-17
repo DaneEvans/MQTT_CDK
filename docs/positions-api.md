@@ -13,7 +13,7 @@ If you enable GitHub Pages from the `docs/` folder, the Swagger page can be shar
 Use the deployed stack output `PositionsApiBaseUrl`.
 
 ```text
-https://your-function-id.lambda-url.ap-southeast-2.on.aws/
+https://your-http-api-id.execute-api.ap-southeast-2.amazonaws.com/
 ```
 
 Related MQTT broker hostname:
@@ -27,7 +27,7 @@ After each deploy, use the latest `PositionsApiBaseUrl` for API consumers and up
 Example:
 
 ```text
-https://your-function-id.lambda-url.ap-southeast-2.on.aws/
+https://your-http-api-id.execute-api.ap-southeast-2.amazonaws.com/
 ```
 
 ## DNS Updates In VentraIP
@@ -57,7 +57,7 @@ Example checks:
 
 ```bash
 dig +short mqtt.goneepic.com
-curl -H "x-api-key: <your-api-key>" "https://your-function-id.lambda-url.ap-southeast-2.on.aws/testAuth"
+curl -H "x-api-key: <your-api-key>" "https://your-http-api-id.execute-api.ap-southeast-2.amazonaws.com/testAuth"
 ```
 
 ## Authentication

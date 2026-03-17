@@ -4,6 +4,8 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
+import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
+import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import { Construct } from "constructs";
 import * as fs from "fs";
 import * as path from "path";
@@ -28,9 +30,19 @@ export class MqttCdkStack extends cdk.Stack {
     const allowedChannel = config.ingest?.allowedChannel || "ANZ";
     const ingestLogLevel = config.ingest?.logLevel || "INFO";
     const positionsApiKey = config.api?.key;
+    const apiCustomDomainName = (config.api?.customDomainName || "").trim();
+    const apiCertificateArn = (config.api?.certificateArn || "").trim();
     if (!positionsApiKey || typeof positionsApiKey !== "string") {
       throw new Error(
         "config.json is missing api.key (required for Positions API auth)",
+      );
+    }
+    if (
+      (apiCustomDomainName && !apiCertificateArn) ||
+      (!apiCustomDomainName && apiCertificateArn)
+    ) {
+      throw new Error(
+        "config.json api.customDomainName and api.certificateArn must both be set together",
       );
     }
 
@@ -41,7 +53,7 @@ export class MqttCdkStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
-    // ── API Lambda (Function URL) ──────────────────────────────────────────
+    // ── API Lambda + API Gateway HTTP API ──────────────────────────────────
     const apiFunctionName = "mqtt-positions-api";
 
     // Pre-create log group with a sane retention so it exists from deploy.
@@ -67,13 +79,78 @@ export class MqttCdkStack extends cdk.Stack {
     });
     positionsTable.grantReadData(positionsApiFn);
 
-    const positionsApiUrl = positionsApiFn.addFunctionUrl({
-      authType: lambda.FunctionUrlAuthType.NONE,
-      cors: {
-        allowedMethods: [lambda.HttpMethod.GET],
-        allowedOrigins: ["*"],
+    const positionsHttpApi = new apigwv2.HttpApi(this, "PositionsHttpApi", {
+      description: "HTTP API for latest positions endpoints",
+      corsPreflight: {
+        allowMethods: [apigwv2.CorsHttpMethod.GET],
+        allowOrigins: ["*"],
       },
     });
+    const positionsIntegration = new apigwv2Integrations.HttpLambdaIntegration(
+      "PositionsLambdaIntegration",
+      positionsApiFn,
+    );
+    positionsHttpApi.addRoutes({
+      path: "/",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: positionsIntegration,
+    });
+    positionsHttpApi.addRoutes({
+      path: "/{proxy+}",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: positionsIntegration,
+    });
+    const positionsApiBaseUrl = cdk.Fn.join("", [
+      positionsHttpApi.apiEndpoint,
+      "/",
+    ]);
+
+    let positionsApiCustomBaseUrl: string | undefined;
+    if (apiCustomDomainName && apiCertificateArn) {
+      const positionsApiDomain = new apigwv2.CfnDomainName(
+        this,
+        "PositionsApiCustomDomain",
+        {
+          domainName: apiCustomDomainName,
+          domainNameConfigurations: [
+            {
+              certificateArn: apiCertificateArn,
+              endpointType: "REGIONAL",
+              securityPolicy: "TLS_1_2",
+            },
+          ],
+        },
+      );
+
+      const positionsApiDomainMapping = new apigwv2.CfnApiMapping(
+        this,
+        "PositionsApiCustomDomainMapping",
+        {
+          apiId: positionsHttpApi.apiId,
+          domainName: apiCustomDomainName,
+          stage: "$default",
+        },
+      );
+      positionsApiDomainMapping.addDependency(positionsApiDomain);
+
+      positionsApiCustomBaseUrl = `https://${apiCustomDomainName}/`;
+      new cdk.CfnOutput(this, "PositionsApiCustomDomainName", {
+        value: apiCustomDomainName,
+        description: "Configured custom domain name for the positions API",
+      });
+      new cdk.CfnOutput(this, "PositionsApiCustomDomainTarget", {
+        value: positionsApiDomain.attrRegionalDomainName,
+        description: "VentraIP DNS target for api CNAME/ALIAS record",
+      });
+      new cdk.CfnOutput(this, "PositionsApiCustomDomainHostedZoneId", {
+        value: positionsApiDomain.attrRegionalHostedZoneId,
+        description: "Route53 hosted zone ID for the API custom domain target",
+      });
+      new cdk.CfnOutput(this, "PositionsApiCustomBaseUrl", {
+        value: positionsApiCustomBaseUrl,
+        description: "Custom domain base URL for positions API",
+      });
+    }
 
     // ── VPC ────────────────────────────────────────────────────────────────
     const vpc = new ec2.Vpc(this, "MqttVpc", {
@@ -503,27 +580,32 @@ export class MqttCdkStack extends cdk.Stack {
       description: "DynamoDB table storing latest position per senderId",
     });
     new cdk.CfnOutput(this, "PositionsApiBaseUrl", {
-      value: positionsApiUrl.url,
-      description: "Function URL base for positions API",
+      value: positionsApiBaseUrl,
+      description: "API Gateway HTTP API base URL for positions API",
+    });
+    new cdk.CfnOutput(this, "PositionsApiPreferredBaseUrl", {
+      value: positionsApiCustomBaseUrl || positionsApiBaseUrl,
+      description:
+        "Preferred API base URL (custom domain when configured, otherwise execute-api)",
     });
     new cdk.CfnOutput(this, "PositionsApiGetKeys", {
-      value: cdk.Fn.join("", [positionsApiUrl.url, "positions/keys"]),
+      value: cdk.Fn.join("", [positionsApiBaseUrl, "positions/keys"]),
       description: "Get all sender IDs currently stored",
     });
     new cdk.CfnOutput(this, "PositionsApiGetLatest", {
-      value: cdk.Fn.join("", [positionsApiUrl.url, "positions/latest"]),
+      value: cdk.Fn.join("", [positionsApiBaseUrl, "positions/latest"]),
       description: "Get all latest positions",
     });
     new cdk.CfnOutput(this, "PositionsApiGetBySender", {
-      value: cdk.Fn.join("", [positionsApiUrl.url, "positions/<senderId>"]),
+      value: cdk.Fn.join("", [positionsApiBaseUrl, "positions/<senderId>"]),
       description: "Get latest position by senderId",
     });
     new cdk.CfnOutput(this, "PositionsApiTest", {
-      value: cdk.Fn.join("", [positionsApiUrl.url, "test"]),
+      value: cdk.Fn.join("", [positionsApiBaseUrl, "test"]),
       description: "Unauthenticated reachability check – no x-api-key needed",
     });
     new cdk.CfnOutput(this, "PositionsApiTestAuth", {
-      value: cdk.Fn.join("", [positionsApiUrl.url, "testAuth"]),
+      value: cdk.Fn.join("", [positionsApiBaseUrl, "testAuth"]),
       description: "Authenticated test – confirms x-api-key is accepted",
     });
     new cdk.CfnOutput(this, "PositionsApiAuthHeader", {
