@@ -2,7 +2,7 @@
 
 Human-readable API reference for service teams consuming the positions API.
 
-Machine-readable spec: [openapi/positions-api.openapi.yaml](/workspaces/MQTT_CDK/openapi/positions-api.openapi.yaml)
+Machine-readable spec: [positions-api.openapi.yaml](./positions-api.openapi.yaml)
 
 Interactive Swagger UI: [docs/swagger.html](/workspaces/MQTT_CDK/docs/swagger.html)
 
@@ -10,10 +10,12 @@ If you enable GitHub Pages from the `docs/` folder, the Swagger page can be shar
 
 ## Base URL
 
-Use the deployed stack output `PositionsApiBaseUrl`.
+Use `https://api.goneepic.com/` as the default consumer URL.
+
+If you need a deployment-specific fallback, use the stack output `PositionsApiPreferredBaseUrl` (or `PositionsApiBaseUrl` when no custom domain is configured).
 
 ```text
-https://your-http-api-id.execute-api.ap-southeast-2.amazonaws.com/
+https://api.goneepic.com/
 ```
 
 Related MQTT broker hostname:
@@ -22,12 +24,12 @@ Related MQTT broker hostname:
 mqtt.goneepic.com:1883
 ```
 
-After each deploy, use the latest `PositionsApiBaseUrl` for API consumers and update `mqtt.goneepic.com` if the broker Elastic IP changed.
+After each deploy, verify `api.goneepic.com` still points to the latest API target and update `mqtt.goneepic.com` if the broker Elastic IP changed.
 
 Example:
 
 ```text
-https://your-http-api-id.execute-api.ap-southeast-2.amazonaws.com/
+https://api.goneepic.com/
 ```
 
 ## DNS Updates In VentraIP
@@ -42,22 +44,23 @@ For `mqtt.goneepic.com`:
 
 For the API:
 
-1. No public custom API alias is configured in this repository today.
-2. Share the current `PositionsApiBaseUrl` output from the latest deployment.
-3. If you later add a custom domain in front of the API, document the DNS target and update these instructions then.
+1. Use `api.goneepic.com` as the public hostname for consumers.
+2. Point the `api` DNS record at the latest `PositionsApiCustomDomainTarget` (or your configured API edge target).
+3. Keep `PositionsApiPreferredBaseUrl` available as a fallback output when troubleshooting.
 
 After each deploy:
 
 1. Compare the current stack outputs with the existing VentraIP DNS records.
 2. Update `mqtt.goneepic.com` if the broker Elastic IP changed.
-3. Update any shared API links to the latest `PositionsApiBaseUrl`.
+3. Confirm `api.goneepic.com` still targets the current API endpoint.
 4. Re-test both hostnames before sharing them.
 
 Example checks:
 
 ```bash
 dig +short mqtt.goneepic.com
-curl -H "x-api-key: <your-api-key>" "https://your-http-api-id.execute-api.ap-southeast-2.amazonaws.com/testAuth"
+dig +short api.goneepic.com
+curl -H "x-api-key: <your-api-key>" "https://api.goneepic.com/testAuth"
 ```
 
 ## Authentication

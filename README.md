@@ -150,10 +150,11 @@ So this is not a fake stub, but it is a JSON-first parser and will not decode ra
 Preferred public hostnames:
 
 - MQTT broker: `mqtt.goneepic.com:1883`
+- HTTP API: `https://api.goneepic.com`
 
-After each deploy, confirm that `mqtt.goneepic.com` still routes to the latest broker endpoint. The API should be consumed using the current `PositionsApiBaseUrl` output from `cdk deploy` unless you add a separate custom domain in front of it.
+After each deploy, confirm these hostnames still route to the latest deployed resources. Use `api.goneepic.com` as the default API URL, and keep `PositionsApiPreferredBaseUrl` as the deployment fallback output.
 
-After deployment, use the stack output `PositionsApiBaseUrl` and append one of:
+After deployment, use the preferred base URL and append one of:
 
 - `GET /positions/keys` - all stored sender IDs
 - `GET /positions/latest` - latest position record for each sender ID
@@ -162,14 +163,14 @@ After deployment, use the stack output `PositionsApiBaseUrl` and append one of:
 Example:
 
 ```bash
-curl -H "x-api-key: <your-api-key>" "https://<http-api-id>.execute-api.<region>.amazonaws.com/positions/keys"
-curl -H "x-api-key: <your-api-key>" "https://<http-api-id>.execute-api.<region>.amazonaws.com/positions/latest"
-curl -H "x-api-key: <your-api-key>" "https://<http-api-id>.execute-api.<region>.amazonaws.com/positions/%21a0cb10f8"
+curl -H "x-api-key: <your-api-key>" "https://api.goneepic.com/positions/keys"
+curl -H "x-api-key: <your-api-key>" "https://api.goneepic.com/positions/latest"
+curl -H "x-api-key: <your-api-key>" "https://api.goneepic.com/positions/%21a0cb10f8"
 ```
 
 Requests without the `x-api-key` header (or with an invalid key) return `401 Unauthorized`.
 
-For service-to-service integration, use the OpenAPI spec in [openapi/positions-api.openapi.yaml](/workspaces/MQTT_CDK/openapi/positions-api.openapi.yaml).
+For service-to-service integration, use the OpenAPI spec in [docs/positions-api.openapi.yaml](docs/positions-api.openapi.yaml).
 
 For a GitHub-friendly rendered version, see [docs/positions-api.md](/workspaces/MQTT_CDK/docs/positions-api.md).
 
@@ -210,7 +211,7 @@ In VentraIP, create/update the `api` host as `CNAME` (or `ALIAS` if preferred by
 After each deploy:
 
 1. Check whether `MqttPublicIp` changed. If it did, update the VentraIP `A` record for `mqtt`.
-2. If custom domain is enabled, confirm `api` points to `PositionsApiCustomDomainTarget`; otherwise use `PositionsApiBaseUrl` directly.
+2. If custom domain is enabled, confirm `api` points to `PositionsApiCustomDomainTarget`; otherwise use `PositionsApiPreferredBaseUrl` directly.
 3. Verify resolution and connectivity before handing the endpoints to consumers.
 
 Suggested verification:
