@@ -13,7 +13,7 @@ A TypeScript AWS CDK project that provisions a small EC2 instance with a fixed E
 | **Mosquitto**      | Installed via EPEL (`amazon-linux-extras` + `yum`), listening on port 1883 (anonymous mode)   |
 | **Ingest worker**  | Python systemd service on EC2; filters one channel and stores only latest position per sender |
 | **DynamoDB**       | `PAY_PER_REQUEST` table keyed by `senderId` for latest position records                       |
-| **Lambda URL API** | Serverless GET endpoints for keys, all latest positions, and position-by-sender               |
+| **API Gateway API** | Serverless GET endpoints for keys, all latest positions, and position-by-sender              |
 
 Stack outputs include the MQTT endpoint plus API URLs.
 
@@ -162,9 +162,9 @@ After deployment, use the stack output `PositionsApiBaseUrl` and append one of:
 Example:
 
 ```bash
-curl -H "x-api-key: <your-api-key>" "https://<function-url-id>.lambda-url.<region>.on.aws/positions/keys"
-curl -H "x-api-key: <your-api-key>" "https://<function-url-id>.lambda-url.<region>.on.aws/positions/latest"
-curl -H "x-api-key: <your-api-key>" "https://<function-url-id>.lambda-url.<region>.on.aws/positions/%21a0cb10f8"
+curl -H "x-api-key: <your-api-key>" "https://<http-api-id>.execute-api.<region>.amazonaws.com/positions/keys"
+curl -H "x-api-key: <your-api-key>" "https://<http-api-id>.execute-api.<region>.amazonaws.com/positions/latest"
+curl -H "x-api-key: <your-api-key>" "https://<http-api-id>.execute-api.<region>.amazonaws.com/positions/%21a0cb10f8"
 ```
 
 Requests without the `x-api-key` header (or with an invalid key) return `401 Unauthorized`.
@@ -192,21 +192,33 @@ For `mqtt.goneepic.com`:
 
 For the API:
 
-No public API alias is configured in this repository today. Use the `PositionsApiBaseUrl` output directly.
+CDK can configure an API Gateway custom domain automatically when these are set in `config.json`:
 
-If you later put the API behind CloudFront, API Gateway custom domain mapping, or another reverse proxy, add the corresponding DNS record in VentraIP at that point.
+- `api.customDomainName` (for example `api.goneepic.com`)
+- `api.certificateArn` (ACM certificate ARN in the same region as the HTTP API)
+
+Once the certificate is issued and validated, it normally remains stable and you can keep reusing the same ARN for future deploys.
+
+After deploying with custom-domain config, use stack outputs:
+
+- `PositionsApiCustomDomainTarget` as the VentraIP DNS target
+- `PositionsApiCustomBaseUrl` as the preferred API URL
+- `PositionsApiPreferredBaseUrl` as a safe fallback output (custom domain when present, otherwise execute-api)
+
+In VentraIP, create/update the `api` host as `CNAME` (or `ALIAS` if preferred by your DNS policy) pointing to `PositionsApiCustomDomainTarget`.
 
 After each deploy:
 
 1. Check whether `MqttPublicIp` changed. If it did, update the VentraIP `A` record for `mqtt`.
-2. Check the latest `PositionsApiBaseUrl` output and share that current API URL with consumers.
+2. If custom domain is enabled, confirm `api` points to `PositionsApiCustomDomainTarget`; otherwise use `PositionsApiBaseUrl` directly.
 3. Verify resolution and connectivity before handing the endpoints to consumers.
 
 Suggested verification:
 
 ```bash
 dig +short mqtt.goneepic.com
-curl -H "x-api-key: <your-api-key>" "https://<function-url-id>.lambda-url.<region>.on.aws/testAuth"
+dig +short api.goneepic.com
+curl -H "x-api-key: <your-api-key>" "https://api.goneepic.com/testAuth"
 mosquitto_sub -h mqtt.goneepic.com -t '#' -v -u meshdev -P large4cats
 ```
 
