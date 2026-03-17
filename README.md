@@ -1,15 +1,15 @@
 # MQTT_CDK
 
-A TypeScript AWS CDK project that provisions a small EC2 instance with a fixed Elastic IP address running the [Mosquitto](https://mosquitto.org/) MQTT broker, plus low-cost latest-position storage and read APIs.
+A TypeScript AWS CDK project that provisions a small EC2 instance with a public IPv6 address running the [Mosquitto](https://mosquitto.org/) MQTT broker, plus low-cost latest-position storage and read APIs.
 
 ## What gets deployed
 
 | Resource           | Details                                                                                       |
 | ------------------ | --------------------------------------------------------------------------------------------- |
-| **VPC**            | Single-AZ public VPC (no NAT gateway)                                                         |
+| **VPC**            | Single-AZ dual-stack public VPC (no NAT gateway)                                              |
 | **EC2 instance**   | `t3.micro`, Amazon Linux 2                                                                    |
-| **Elastic IP**     | Fixed public IP address attached to the instance                                              |
-| **Security group** | Inbound: SSH (22), MQTT (1883), MQTT-TLS (8883)                                               |
+| **IPv6 broker**    | One public IPv6 address assigned to the instance; no Elastic IP                               |
+| **Security group** | Inbound over IPv6: SSH (22), MQTT (1883)                                                      |
 | **Mosquitto**      | Installed via EPEL (`amazon-linux-extras` + `yum`), listening on port 1883 (anonymous mode)   |
 | **Ingest worker**  | Python systemd service on EC2; filters one channel and stores only latest position per sender |
 | **DynamoDB**       | `PAY_PER_REQUEST` table keyed by `senderId` for latest position records                       |
@@ -197,24 +197,28 @@ The API now logs request path/method, unauthorized requests, and result counts.
 
 ## Connecting to the broker
 
-After `cdk deploy` completes, the stack prints the broker endpoint:
+After `cdk deploy` completes, the stack prints the broker IPv6 endpoint:
 
 ```
 Outputs:
-MqttCdkStack.MqttPublicIp      = 1.2.3.4
-MqttCdkStack.MqttBrokerEndpoint = mqtt://1.2.3.4:1883
+MqttCdkStack.MqttBrokerIpv6    = 2406:da1c:abcd:1234:5678:90ab:cdef:1234
+MqttCdkStack.MqttBrokerEndpoint = mqtt://[2406:da1c:abcd:1234:5678:90ab:cdef:1234]:1883
 MqttCdkStack.PositionsApiBaseUrl = https://...
 ```
+
+This removes the public IPv4 / Elastic IP charge. The IPv6 address is stable for the life of the EC2 instance, but it is not an Elastic-IP-style address that survives instance replacement.
 
 Use any MQTT client to connect with credentials from `config.json`, for example with `mosquitto_pub`:
 
 ```bash
 # Send a message
-mosquitto_pub -h 1.2.3.4 -t test/hello -m "Hello MQTT" -u meshdev -P large4cats
+mosquitto_pub -h 2406:da1c:abcd:1234:5678:90ab:cdef:1234 -t test/hello -m "Hello MQTT" -u meshdev -P large4cats
 
 # Subscribe to all topics
-mosquitto_sub -h 1.2.3.4 -t '#' -v -u meshdev -P large4cats
+mosquitto_sub -h 2406:da1c:abcd:1234:5678:90ab:cdef:1234 -t '#' -v -u meshdev -P large4cats
 ```
+
+If your client needs bracket syntax, use the `MqttBrokerEndpoint` output directly.
 
 > **Note:** For production use, restrict the SSH security-group rule to your own IP, enable TLS on port 8883, and disable anonymous access in `/etc/mosquitto/conf.d/default.conf`.
 

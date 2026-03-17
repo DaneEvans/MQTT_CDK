@@ -4,17 +4,18 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
+import * as cr from "aws-cdk-lib/custom-resources";
 import { Construct } from "constructs";
 import * as fs from "fs";
 import * as path from "path";
 
 /**
  * CDK Stack that provisions:
- *  - A VPC with a public subnet
+ *  - A dual-stack VPC with a public subnet
  *  - A small EC2 instance (t3.micro) running Amazon Linux 2
- *  - An Elastic IP (fixed public IP) attached to the instance
+ *  - A public IPv6 address attached to the instance (no billed public IPv4)
  *  - Mosquitto MQTT broker installed and configured via user data
- *  - A security group that opens port 1883 (MQTT), 8883 (MQTT TLS), and 22 (SSH)
+ *  - A security group that opens port 1883 (MQTT) and 22 (SSH) over IPv6
  */
 export class MqttCdkStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -77,6 +78,8 @@ export class MqttCdkStack extends cdk.Stack {
 
     // ── VPC ────────────────────────────────────────────────────────────────
     const vpc = new ec2.Vpc(this, "MqttVpc", {
+      ipProtocol: ec2.IpProtocol.DUAL_STACK,
+      ipv6Addresses: ec2.Ipv6Addresses.amazonProvided(),
       maxAzs: 1,
       natGateways: 0,
       subnetConfiguration: [
@@ -91,20 +94,21 @@ export class MqttCdkStack extends cdk.Stack {
     // ── Security group ──────────────────────────────────────────────────────
     const sg = new ec2.SecurityGroup(this, "MqttSg", {
       vpc,
-      description: "Allow MQTT (1883) and SSH (22) inbound",
+      description: "Allow MQTT (1883) and SSH (22) inbound over IPv6",
       allowAllOutbound: true,
+      allowAllIpv6Outbound: true,
     });
 
-    // SSH – open for EC2 Instance Connect; restrict to your own IP in production if preferred
+    // SSH over IPv6 for hosts with IPv6 connectivity; SSM remains available without SSH.
     sg.addIngressRule(
-      ec2.Peer.anyIpv4(),
+      ec2.Peer.anyIpv6(),
       ec2.Port.tcp(22),
-      "SSH / EC2 Instance Connect",
+      "SSH / EC2 Instance Connect over IPv6",
     );
-    // MQTT plain-text
-    sg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(1883), "MQTT");
+    // MQTT plain-text over IPv6
+    sg.addIngressRule(ec2.Peer.anyIpv6(), ec2.Port.tcp(1883), "MQTT over IPv6");
     // MQTT over TLS (optional, useful for future use)
-    // sg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(8883), "MQTT TLS");
+    // sg.addIngressRule(ec2.Peer.anyIpv6(), ec2.Port.tcp(8883), "MQTT TLS over IPv6");
 
     // ── IAM Role for SSM Session Manager access ──────────────────────────────
     const role = new iam.Role(this, "MqttInstanceRole", {
@@ -120,6 +124,7 @@ export class MqttCdkStack extends cdk.Stack {
     // ── User data – install & start Mosquitto ───────────────────────────────
     const userData = ec2.UserData.forLinux();
     userData.addCommands(
+      "echo 'mqtt-cdk bootstrap v2' > /etc/mqtt-cdk-bootstrap-version",
       // Update packages
       "yum update -y",
       // Enable EPEL and install mosquitto
@@ -140,7 +145,7 @@ export class MqttCdkStack extends cdk.Stack {
       "persistence true",
       "persistence_location /var/lib/mosquitto/",
       "log_dest syslog",
-      "listener 1883 0.0.0.0",
+      "listener 1883",
       "allow_anonymous false",
       "password_file /etc/mosquitto/passwd",
       "EOF",
@@ -433,35 +438,67 @@ export class MqttCdkStack extends cdk.Stack {
       securityGroup: sg,
       userData,
       role,
+      ipv6AddressCount: 1,
       // IMDSv2 required for better security
       requireImdsv2: true,
       // Force instance replacement when user data changes
       userDataCausesReplacement: true,
     });
 
-    // ── Elastic IP (fixed public IP) ────────────────────────────────────────
-    const eip = new ec2.CfnEIP(this, "MqttEip", { domain: "vpc" });
-    new ec2.CfnEIPAssociation(this, "MqttEipAssociation", {
-      instanceId: instance.instanceId,
-      allocationId: eip.attrAllocationId,
-    });
+    const brokerIpv6Lookup = new cr.AwsCustomResource(
+      this,
+      "MqttBrokerIpv6Lookup",
+      {
+        onCreate: {
+          service: "EC2",
+          action: "describeInstances",
+          parameters: { InstanceIds: [instance.instanceId] },
+          outputPaths: [
+            "Reservations.0.Instances.0.NetworkInterfaces.0.Ipv6Addresses.0.Ipv6Address",
+          ],
+          physicalResourceId: cr.PhysicalResourceId.of(
+            `${cdk.Names.uniqueId(instance)}-ipv6`,
+          ),
+        },
+        onUpdate: {
+          service: "EC2",
+          action: "describeInstances",
+          parameters: { InstanceIds: [instance.instanceId] },
+          outputPaths: [
+            "Reservations.0.Instances.0.NetworkInterfaces.0.Ipv6Addresses.0.Ipv6Address",
+          ],
+          physicalResourceId: cr.PhysicalResourceId.of(
+            `${cdk.Names.uniqueId(instance)}-ipv6`,
+          ),
+        },
+        policy: cr.AwsCustomResourcePolicy.fromSdkCalls({
+          resources: cr.AwsCustomResourcePolicy.ANY_RESOURCE,
+        }),
+      },
+    );
+    const brokerIpv6 = brokerIpv6Lookup.getResponseField(
+      "Reservations.0.Instances.0.NetworkInterfaces.0.Ipv6Addresses.0.Ipv6Address",
+    );
 
     // ── Outputs ─────────────────────────────────────────────────────────────
-    new cdk.CfnOutput(this, "MqttPublicIp", {
-      value: eip.ref,
-      description: "Fixed public IP address (Elastic IP) of the MQTT broker",
+    new cdk.CfnOutput(this, "MqttBrokerIpv6", {
+      value: brokerIpv6,
+      description:
+        "Current public IPv6 address of the MQTT broker (stable for this instance, changes on replacement)",
     });
     new cdk.CfnOutput(this, "MqttBrokerEndpoint", {
-      value: cdk.Fn.join("", ["mqtt://", eip.ref, ":1883"]),
-      description: "MQTT broker endpoint",
+      value: cdk.Fn.join("", ["mqtt://[", brokerIpv6, "]:1883"]),
+      description: "MQTT broker endpoint over IPv6",
     });
     new cdk.CfnOutput(this, "VerifyMosquittoSSH", {
       value: cdk.Fn.join("", [
         "ssh -i <your-key.pem> ec2-user@",
-        eip.ref,
+        "[",
+        brokerIpv6,
+        "]",
         " 'sudo systemctl status mosquitto'",
       ]),
-      description: "SSH command to verify mosquitto is running",
+      description: "SSH command to verify mosquitto is running over IPv6",
     });
     new cdk.CfnOutput(this, "VerifyMosquittoSSM", {
       value: cdk.Fn.join("", [

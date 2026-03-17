@@ -15,14 +15,14 @@ test("EC2 instance is t3.micro", () => {
   });
 });
 
-test("Elastic IP is created", () => {
+test("Elastic IP is not created", () => {
   const template = buildTemplate();
-  template.resourceCountIs("AWS::EC2::EIP", 1);
+  template.resourceCountIs("AWS::EC2::EIP", 0);
 });
 
-test("EIP association is created", () => {
+test("EIP association is not created", () => {
   const template = buildTemplate();
-  template.resourceCountIs("AWS::EC2::EIPAssociation", 1);
+  template.resourceCountIs("AWS::EC2::EIPAssociation", 0);
 });
 
 test("VPC is created", () => {
@@ -30,19 +30,50 @@ test("VPC is created", () => {
   template.resourceCountIs("AWS::EC2::VPC", 1);
 });
 
-test("Security group allows MQTT on port 1883", () => {
+test("VPC has an Amazon-provided IPv6 CIDR block", () => {
+  const template = buildTemplate();
+  template.hasResourceProperties("AWS::EC2::VPCCidrBlock", {
+    AmazonProvidedIpv6CidrBlock: true,
+  });
+});
+
+test("EC2 instance has one IPv6 address", () => {
+  const template = buildTemplate();
+  template.hasResourceProperties("AWS::EC2::Instance", {
+    Ipv6AddressCount: 1,
+  });
+});
+
+test("Security group allows MQTT on port 1883 over IPv6", () => {
   const template = buildTemplate();
   template.hasResourceProperties("AWS::EC2::SecurityGroup", {
     SecurityGroupIngress: Match.arrayWith([
-      Match.objectLike({ FromPort: 1883, ToPort: 1883, IpProtocol: "tcp" }),
+      Match.objectLike({
+        CidrIpv6: "::/0",
+        FromPort: 1883,
+        ToPort: 1883,
+        IpProtocol: "tcp",
+      }),
     ]),
   });
 });
 
-test("Stack outputs MqttPublicIp and MqttBrokerEndpoint", () => {
+test("Security group allows all outbound over IPv6", () => {
+  const template = buildTemplate();
+  template.hasResourceProperties("AWS::EC2::SecurityGroup", {
+    SecurityGroupEgress: Match.arrayWith([
+      Match.objectLike({
+        CidrIpv6: "::/0",
+        IpProtocol: "-1",
+      }),
+    ]),
+  });
+});
+
+test("Stack outputs MqttBrokerIpv6 and MqttBrokerEndpoint", () => {
   const template = buildTemplate();
   const outputs = template.toJSON().Outputs ?? {};
-  expect(outputs).toHaveProperty("MqttPublicIp");
+  expect(outputs).toHaveProperty("MqttBrokerIpv6");
   expect(outputs).toHaveProperty("MqttBrokerEndpoint");
   expect(outputs).toHaveProperty("PositionsApiBaseUrl");
   expect(outputs).toHaveProperty("PositionsTableName");
