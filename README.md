@@ -150,9 +150,8 @@ So this is not a fake stub, but it is a JSON-first parser and will not decode ra
 Preferred public hostnames:
 
 - MQTT broker: `mqtt.goneepic.com:1883`
-- HTTP API: `https://api.goneepic.com`
 
-After each deploy, confirm those hostnames still route to the latest deployed resources. In practice that means updating VentraIP DNS and any reverse proxy or edge mapping so `mqtt.goneepic.com` points at the current broker endpoint and `api.goneepic.com` points at the current API deployment.
+After each deploy, confirm that `mqtt.goneepic.com` still routes to the latest broker endpoint. The API should be consumed using the current `PositionsApiBaseUrl` output from `cdk deploy` unless you add a separate custom domain in front of it.
 
 After deployment, use the stack output `PositionsApiBaseUrl` and append one of:
 
@@ -163,9 +162,9 @@ After deployment, use the stack output `PositionsApiBaseUrl` and append one of:
 Example:
 
 ```bash
-curl -H "x-api-key: <your-api-key>" "https://api.goneepic.com/positions/keys"
-curl -H "x-api-key: <your-api-key>" "https://api.goneepic.com/positions/latest"
-curl -H "x-api-key: <your-api-key>" "https://api.goneepic.com/positions/%21a0cb10f8"
+curl -H "x-api-key: <your-api-key>" "https://<function-url-id>.lambda-url.<region>.on.aws/positions/keys"
+curl -H "x-api-key: <your-api-key>" "https://<function-url-id>.lambda-url.<region>.on.aws/positions/latest"
+curl -H "x-api-key: <your-api-key>" "https://<function-url-id>.lambda-url.<region>.on.aws/positions/%21a0cb10f8"
 ```
 
 Requests without the `x-api-key` header (or with an invalid key) return `401 Unauthorized`.
@@ -191,24 +190,23 @@ For `mqtt.goneepic.com`:
 3. Set it as an `A` record pointing to the current `MqttPublicIp` output from `cdk deploy`.
 4. Keep the port at `1883` in client configuration; DNS only maps the hostname.
 
-For `api.goneepic.com`:
+For the API:
 
-1. Point `api.goneepic.com` at the public hostname of the layer that terminates TLS for your API.
-2. If you are using CloudFront, API Gateway custom domain mapping, or another reverse proxy in front of the Function URL, create or update the `api` record to target that hostname.
-3. Do not rely on a raw DNS rename to the Lambda Function URL as the final public setup unless your TLS and custom domain mapping are handled correctly upstream.
+No public API alias is configured in this repository today. Use the `PositionsApiBaseUrl` output directly.
+
+If you later put the API behind CloudFront, API Gateway custom domain mapping, or another reverse proxy, add the corresponding DNS record in VentraIP at that point.
 
 After each deploy:
 
 1. Check whether `MqttPublicIp` changed. If it did, update the VentraIP `A` record for `mqtt`.
-2. Check whether the API target behind `api.goneepic.com` changed. If it did, update the VentraIP DNS record or edge mapping for `api`.
+2. Check the latest `PositionsApiBaseUrl` output and share that current API URL with consumers.
 3. Verify resolution and connectivity before handing the endpoints to consumers.
 
 Suggested verification:
 
 ```bash
 dig +short mqtt.goneepic.com
-dig +short api.goneepic.com
-curl -H "x-api-key: <your-api-key>" "https://api.goneepic.com/testAuth"
+curl -H "x-api-key: <your-api-key>" "https://<function-url-id>.lambda-url.<region>.on.aws/testAuth"
 mosquitto_sub -h mqtt.goneepic.com -t '#' -v -u meshdev -P large4cats
 ```
 
@@ -255,7 +253,7 @@ MqttCdkStack.MqttBrokerEndpoint = mqtt://1.2.3.4:1883
 MqttCdkStack.PositionsApiBaseUrl = https://...
 ```
 
-Treat those outputs as deployment targets rather than the long-term consumer addresses. After deploy, update your public hostnames so clients can continue using `mqtt.goneepic.com` and `api.goneepic.com`.
+Treat the MQTT output as a deployment target behind `mqtt.goneepic.com`. The API should be consumed using the latest `PositionsApiBaseUrl` output unless you add a separate custom domain in front of it.
 
 Use any MQTT client to connect with credentials from `config.json`, for example with `mosquitto_pub`:
 
