@@ -8,7 +8,6 @@ info:
 
     Public hostnames used by consumers:
     - MQTT broker: `mqtt.goneepic.com:1883`
-    - HTTP API: `https://api.goneepic.com`
 
     Authentication is performed with the `x-api-key` header for all routes except
     `GET /test`.
@@ -18,12 +17,10 @@ info:
     - Trailing slashes are tolerated by the implementation and normalize to the same route.
     - `GET /positions/latest` and `GET /positions/{senderId}` return the same record shape.
     - `shortname` and `longname` are always present as strings, and default to an empty string when no node metadata has been ingested yet.
-    - Public DNS is managed in VentraIP; after each deploy, update the DNS or edge routing for `mqtt.goneepic.com` and `api.goneepic.com` so they point at the current deployed broker and API.
+    - Public DNS is managed in VentraIP for the MQTT broker hostname; after each deploy, update `mqtt.goneepic.com` if the broker endpoint changes.
 servers:
-  - url: https://api.goneepic.com
-    description: Preferred public API hostname for consumers
   - url: https://{functionUrl}
-    description: Direct Lambda Function URL for the deployed API; update `api.goneepic.com` routing after deploy if this changes
+    description: Direct Lambda Function URL for the deployed API
     variables:
       functionUrl:
         default: your-function-id.lambda-url.ap-southeast-2.on.aws

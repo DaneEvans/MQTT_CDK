@@ -10,10 +10,10 @@ If you enable GitHub Pages from the `docs/` folder, the Swagger page can be shar
 
 ## Base URL
 
-Preferred public API hostname:
+Use the deployed stack output `PositionsApiBaseUrl`.
 
 ```text
-https://api.goneepic.com/
+https://your-function-id.lambda-url.ap-southeast-2.on.aws/
 ```
 
 Related MQTT broker hostname:
@@ -22,13 +22,12 @@ Related MQTT broker hostname:
 mqtt.goneepic.com:1883
 ```
 
-Use the deployed stack output `PositionsApiBaseUrl` as the deployment target behind `api.goneepic.com`.
-After each deploy, update your DNS or edge routing so `api.goneepic.com` and `mqtt.goneepic.com` still point at the current resources.
+After each deploy, use the latest `PositionsApiBaseUrl` for API consumers and update `mqtt.goneepic.com` if the broker Elastic IP changed.
 
 Example:
 
 ```text
-https://api.goneepic.com/
+https://your-function-id.lambda-url.ap-southeast-2.on.aws/
 ```
 
 ## DNS Updates In VentraIP
@@ -41,25 +40,24 @@ For `mqtt.goneepic.com`:
 2. Create or update the `mqtt` host as an `A` record.
 3. Set the record value to the latest `MqttPublicIp` from the stack outputs.
 
-For `api.goneepic.com`:
+For the API:
 
-1. Point the `api` host at the public hostname of the component serving TLS for the API.
-2. That may be a CloudFront distribution, API Gateway custom domain target, or another reverse proxy in front of the Function URL.
-3. Do not treat the raw Lambda Function URL as the final public hostname unless custom domain and TLS handling are already in place.
+1. No public custom API alias is configured in this repository today.
+2. Share the current `PositionsApiBaseUrl` output from the latest deployment.
+3. If you later add a custom domain in front of the API, document the DNS target and update these instructions then.
 
 After each deploy:
 
 1. Compare the current stack outputs with the existing VentraIP DNS records.
 2. Update `mqtt.goneepic.com` if the broker Elastic IP changed.
-3. Update `api.goneepic.com` if the API edge target changed.
+3. Update any shared API links to the latest `PositionsApiBaseUrl`.
 4. Re-test both hostnames before sharing them.
 
 Example checks:
 
 ```bash
 dig +short mqtt.goneepic.com
-dig +short api.goneepic.com
-curl -H "x-api-key: <your-api-key>" "https://api.goneepic.com/testAuth"
+curl -H "x-api-key: <your-api-key>" "https://your-function-id.lambda-url.ap-southeast-2.on.aws/testAuth"
 ```
 
 ## Authentication
