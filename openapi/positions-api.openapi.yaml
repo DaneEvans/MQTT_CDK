@@ -1,0 +1,363 @@
+openapi: 3.0.3
+info:
+  title: MQTT Positions API
+  version: 1.0.0
+  summary: Read-only HTTP API for latest Meshtastic position records
+  description: |
+    OpenAPI specification for the Lambda Function URL exposed by this stack.
+
+    Public hostnames used by consumers:
+    - MQTT broker: `mqtt.goneepic.com:1883`
+    - HTTP API: `https://api.goneepic.com`
+
+    Authentication is performed with the `x-api-key` header for all routes except
+    `GET /test`.
+
+    Notes for consumers:
+    - All endpoints are read-only and accept `GET` only.
+    - Trailing slashes are tolerated by the implementation and normalize to the same route.
+    - `GET /positions/latest` and `GET /positions/{senderId}` return the same record shape.
+    - `shortname` and `longname` are always present as strings, and default to an empty string when no node metadata has been ingested yet.
+    - Public DNS is managed in VentraIP; after each deploy, update the DNS or edge routing for `mqtt.goneepic.com` and `api.goneepic.com` so they point at the current deployed broker and API.
+servers:
+  - url: https://api.goneepic.com
+    description: Preferred public API hostname for consumers
+  - url: https://{functionUrl}
+    description: Direct Lambda Function URL for the deployed API; update `api.goneepic.com` routing after deploy if this changes
+    variables:
+      functionUrl:
+        default: your-function-id.lambda-url.ap-southeast-2.on.aws
+tags:
+  - name: Health
+    description: Reachability and authentication checks
+  - name: Positions
+    description: Latest position lookup endpoints
+security:
+  - ApiKeyAuth: []
+paths:
+  /test:
+    get:
+      tags:
+        - Health
+      summary: Reachability check
+      description: Returns a simple success payload without requiring authentication.
+      security: []
+      operationId: getHealth
+      responses:
+        "200":
+          description: API is reachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+              examples:
+                reachable:
+                  value:
+                    status: ok
+                    message: API is reachable
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+  /testAuth:
+    get:
+      tags:
+        - Health
+      summary: Authentication check
+      description: Verifies that the supplied API key is valid.
+      operationId: getAuthHealth
+      responses:
+        "200":
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+              examples:
+                authorized:
+                  value:
+                    status: ok
+                    message: Authentication successful
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/MissingPositionsTable"
+  /positions/keys:
+    get:
+      tags:
+        - Positions
+      summary: List all known sender IDs
+      description: Returns every stored `senderId`, sorted ascending.
+      operationId: listSenderIds
+      responses:
+        "200":
+          description: Sender IDs returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KeysResponse"
+              examples:
+                keys:
+                  value:
+                    keys:
+                      - "!a0cb10f8"
+                      - "!f00dbabe"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/MissingPositionsTable"
+  /positions/latest:
+    get:
+      tags:
+        - Positions
+      summary: List latest positions for all senders
+      description: Returns the latest stored record for each sender.
+      operationId: listLatestPositions
+      responses:
+        "200":
+          description: Latest positions returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LatestPositionsResponse"
+              examples:
+                latest:
+                  value:
+                    positions:
+                      - senderId: "!a0cb10f8"
+                        channel: ANZ
+                        topic: msh/ANZ/2/json/!a0cb10f8
+                        updatedAt: 1710485699123
+                        updatedNodeinfoAt: 1710485600000
+                        shortname: Alpha
+                        longname: Field Node Alpha
+                        position:
+                          lat: -33.865143
+                          lon: 151.2099
+                          altitude: 42
+                          satsInView: 8
+                          groundTrack: 270
+                          groundSpeed: 1.5
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/MissingPositionsTable"
+  /positions/{senderId}:
+    get:
+      tags:
+        - Positions
+      summary: Get the latest record for one sender
+      description: Returns the latest stored record for the given `senderId`.
+      operationId: getPositionBySenderId
+      parameters:
+        - name: senderId
+          in: path
+          required: true
+          description: Sender identifier, typically in `!xxxxxxxx` hexadecimal form.
+          schema:
+            type: string
+          example: "!a0cb10f8"
+      responses:
+        "200":
+          description: Sender record returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PositionRecord"
+              examples:
+                sender:
+                  value:
+                    senderId: "!a0cb10f8"
+                    channel: ANZ
+                    topic: msh/ANZ/2/json/!a0cb10f8
+                    updatedAt: 1710485699123
+                    updatedNodeinfoAt: 1710485600000
+                    longname: Field Node Alpha
+                    shortname: Alpha
+                    position:
+                      lat: -33.865143
+                      lon: 151.2099
+                      altitude: 42
+                      satsInView: 8
+                      groundTrack: 270
+                      groundSpeed: 1.5
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No record exists for the sender ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SenderNotFoundError"
+              examples:
+                notFound:
+                  value:
+                    error: senderId not found
+                    senderId: "!deadbeef"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/MissingPositionsTable"
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: API key configured in `config.json` as `api.key`.
+  responses:
+    Unauthorized:
+      description: Missing or invalid API key
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            unauthorized:
+              value:
+                error: Unauthorized
+    MethodNotAllowed:
+      description: Only `GET` is supported
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            methodNotAllowed:
+              value:
+                error: Method not allowed
+    MissingPositionsTable:
+      description: Server misconfiguration prevented access to the backing table
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            missingTable:
+              value:
+                error: Missing POSITIONS_TABLE_NAME
+  schemas:
+    StatusResponse:
+      type: object
+      required:
+        - status
+        - message
+      properties:
+        status:
+          type: string
+          example: ok
+        message:
+          type: string
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+    SenderNotFoundError:
+      type: object
+      required:
+        - error
+        - senderId
+      properties:
+        error:
+          type: string
+          example: senderId not found
+        senderId:
+          type: string
+          example: "!deadbeef"
+    KeysResponse:
+      type: object
+      required:
+        - keys
+      properties:
+        keys:
+          type: array
+          items:
+            type: string
+          example:
+            - "!a0cb10f8"
+            - "!f00dbabe"
+    Position:
+      type: object
+      properties:
+        lat:
+          type: number
+          format: double
+          example: -33.865143
+        lon:
+          type: number
+          format: double
+          example: 151.2099
+        altitude:
+          type: number
+          format: double
+          example: 42
+        satsInView:
+          type: number
+          format: double
+          example: 8
+        groundTrack:
+          type: number
+          format: double
+          example: 270
+        groundSpeed:
+          type: number
+          format: double
+          example: 1.5
+      additionalProperties: false
+      nullable: true
+    PositionRecord:
+      type: object
+      required:
+        - senderId
+        - shortname
+        - longname
+        - position
+      properties:
+        senderId:
+          type: string
+          example: "!a0cb10f8"
+        channel:
+          type: string
+          nullable: true
+          example: ANZ
+        topic:
+          type: string
+          nullable: true
+          example: msh/ANZ/2/json/!a0cb10f8
+        updatedAt:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds.
+          example: 1710485699123
+          nullable: true
+        updatedNodeinfoAt:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds for the latest node info update.
+          example: 1710485600000
+          nullable: true
+        shortname:
+          type: string
+          example: Alpha
+        longname:
+          type: string
+          example: Field Node Alpha
+        position:
+          $ref: "#/components/schemas/Position"
+      additionalProperties: false
+    LatestPositionsResponse:
+      type: object
+      required:
+        - positions
+      properties:
+        positions:
+          type: array
+          items:
+            $ref: "#/components/schemas/PositionRecord"

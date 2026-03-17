@@ -1,18 +1,21 @@
 # MQTT_CDK
 
-A TypeScript AWS CDK project that provisions a small EC2 instance with a fixed Elastic IP address running the [Mosquitto](https://mosquitto.org/) MQTT broker.
+A TypeScript AWS CDK project that provisions a small EC2 instance with a fixed Elastic IP address running the [Mosquitto](https://mosquitto.org/) MQTT broker, plus low-cost latest-position storage and read APIs.
 
 ## What gets deployed
 
-| Resource           | Details                                                                                     |
-| ------------------ | ------------------------------------------------------------------------------------------- |
-| **VPC**            | Single-AZ public VPC (no NAT gateway)                                                       |
-| **EC2 instance**   | `t3.micro`, Amazon Linux 2                                                                  |
-| **Elastic IP**     | Fixed public IP address attached to the instance                                            |
-| **Security group** | Inbound: SSH (22), MQTT (1883), MQTT-TLS (8883)                                             |
-| **Mosquitto**      | Installed via EPEL (`amazon-linux-extras` + `yum`), listening on port 1883 (anonymous mode) |
+| Resource           | Details                                                                                       |
+| ------------------ | --------------------------------------------------------------------------------------------- |
+| **VPC**            | Single-AZ public VPC (no NAT gateway)                                                         |
+| **EC2 instance**   | `t3.micro`, Amazon Linux 2                                                                    |
+| **Elastic IP**     | Fixed public IP address attached to the instance                                              |
+| **Security group** | Inbound: SSH (22), MQTT (1883), MQTT-TLS (8883)                                               |
+| **Mosquitto**      | Installed via EPEL (`amazon-linux-extras` + `yum`), listening on port 1883 (anonymous mode)   |
+| **Ingest worker**  | Python systemd service on EC2; filters one channel and stores only latest position per sender |
+| **DynamoDB**       | `PAY_PER_REQUEST` table keyed by `senderId` for latest position records                       |
+| **Lambda URL API** | Serverless GET endpoints for keys, all latest positions, and position-by-sender               |
 
-Stack outputs include the Elastic IP and the full `mqtt://…:1883` endpoint.
+Stack outputs include the MQTT endpoint plus API URLs.
 
 ---
 
@@ -98,6 +101,149 @@ npm test
 
 ---
 
+## Configuration
+
+Set MQTT credentials and channel filter in `config.json`:
+
+```json
+{
+  "mqtt": {
+    "username": "meshdev",
+    "password": "large4cats"
+  },
+  "ingest": {
+    "allowedChannel": "ANZ"
+  },
+  "api": {
+    "key": "replace-with-strong-api-key"
+  }
+}
+```
+
+Only packets from `ingest.allowedChannel` are considered for storage.
+The ingest worker stores only packets it can parse as JSON position data.
+
+`ingest.logLevel` controls worker verbosity (`INFO` recommended, `DEBUG` for deep troubleshooting).
+
+---
+
+## Meshtastic Payload Reality
+
+Meshtastic MQTT traffic is not always plain JSON:
+
+- You may see binary/protobuf payloads on many topics, especially with encrypted packets.
+- Meshtastic topics containing `/e/` are encrypted frames; they are expected to be binary and not JSON.
+- This stack currently ingests JSON-decodable packets only.
+- If a payload is binary or not JSON, it is dropped and logged as `non-json payload dropped`.
+- Position detection currently accepts payloads where one of these is true:
+  - `type == position`
+  - `portnum == position_app`
+  - a `position` object exists
+  - direct lat/lon fields exist (`lat`, `lon`, `latitude`, `longitude`, `latitudeI`, `longitudeI`)
+
+So this is not a fake stub, but it is a JSON-first parser and will not decode raw protobuf frames.
+
+---
+
+## Position API
+
+Preferred public hostnames:
+
+- MQTT broker: `mqtt.goneepic.com:1883`
+- HTTP API: `https://api.goneepic.com`
+
+After each deploy, confirm those hostnames still route to the latest deployed resources. In practice that means updating VentraIP DNS and any reverse proxy or edge mapping so `mqtt.goneepic.com` points at the current broker endpoint and `api.goneepic.com` points at the current API deployment.
+
+After deployment, use the stack output `PositionsApiBaseUrl` and append one of:
+
+- `GET /positions/keys` - all stored sender IDs
+- `GET /positions/latest` - latest position record for each sender ID
+- `GET /positions/{senderId}` - latest position record for one sender ID
+
+Example:
+
+```bash
+curl -H "x-api-key: <your-api-key>" "https://api.goneepic.com/positions/keys"
+curl -H "x-api-key: <your-api-key>" "https://api.goneepic.com/positions/latest"
+curl -H "x-api-key: <your-api-key>" "https://api.goneepic.com/positions/%21a0cb10f8"
+```
+
+Requests without the `x-api-key` header (or with an invalid key) return `401 Unauthorized`.
+
+For service-to-service integration, use the OpenAPI spec in [openapi/positions-api.openapi.yaml](/workspaces/MQTT_CDK/openapi/positions-api.openapi.yaml).
+
+For a GitHub-friendly rendered version, see [docs/positions-api.md](/workspaces/MQTT_CDK/docs/positions-api.md).
+
+For an interactive Swagger UI, see [docs/swagger.html](/workspaces/MQTT_CDK/docs/swagger.html). If you want it shareable in a browser, serve the repo over HTTP or enable GitHub Pages from the `docs/` folder.
+
+GitHub Pages deployment is configured in [.github/workflows/pages.yml](/workspaces/MQTT_CDK/.github/workflows/pages.yml). Once Pages is enabled for GitHub Actions in the repository settings, the published site will expose a landing page at `docs/index.html` and the Swagger UI at `docs/swagger.html`.
+
+`GET /positions/latest` and `GET /positions/{senderId}` now share the same response shape, including `shortname` and `longname` fields.
+
+### DNS Updates In VentraIP
+
+Use VentraIP as the public DNS control plane for the consumer-facing hostnames.
+
+For `mqtt.goneepic.com`:
+
+1. Open the domain in VentraIP and go to DNS management.
+2. Find or create the `mqtt` host record.
+3. Set it as an `A` record pointing to the current `MqttPublicIp` output from `cdk deploy`.
+4. Keep the port at `1883` in client configuration; DNS only maps the hostname.
+
+For `api.goneepic.com`:
+
+1. Point `api.goneepic.com` at the public hostname of the layer that terminates TLS for your API.
+2. If you are using CloudFront, API Gateway custom domain mapping, or another reverse proxy in front of the Function URL, create or update the `api` record to target that hostname.
+3. Do not rely on a raw DNS rename to the Lambda Function URL as the final public setup unless your TLS and custom domain mapping are handled correctly upstream.
+
+After each deploy:
+
+1. Check whether `MqttPublicIp` changed. If it did, update the VentraIP `A` record for `mqtt`.
+2. Check whether the API target behind `api.goneepic.com` changed. If it did, update the VentraIP DNS record or edge mapping for `api`.
+3. Verify resolution and connectivity before handing the endpoints to consumers.
+
+Suggested verification:
+
+```bash
+dig +short mqtt.goneepic.com
+dig +short api.goneepic.com
+curl -H "x-api-key: <your-api-key>" "https://api.goneepic.com/testAuth"
+mosquitto_sub -h mqtt.goneepic.com -t '#' -v -u meshdev -P large4cats
+```
+
+---
+
+## Observability
+
+On EC2 (ingest worker):
+
+```bash
+sudo journalctl -u mqtt-ingest -f --no-pager
+```
+
+You should see:
+
+- startup/connect messages
+- periodic stats snapshots (`received`, `stored`, `non_json`, etc.)
+- one log line per successful stored position
+
+If you are not seeing stored positions, look for:
+
+- `non-json payload dropped` (binary/protobuf payloads)
+- high `filtered_channel` counts (wrong channel)
+- `missing_position` / `missing_sender`
+
+For Lambda API logs (CloudWatch), use the stack output `PositionsApiTailCommand` or run:
+
+```bash
+aws logs tail /aws/lambda/mqtt-positions-api --follow
+```
+
+The API now logs request path/method, unauthorized requests, and result counts.
+
+---
+
 ## Connecting to the broker
 
 After `cdk deploy` completes, the stack prints the broker endpoint:
@@ -106,16 +252,19 @@ After `cdk deploy` completes, the stack prints the broker endpoint:
 Outputs:
 MqttCdkStack.MqttPublicIp      = 1.2.3.4
 MqttCdkStack.MqttBrokerEndpoint = mqtt://1.2.3.4:1883
+MqttCdkStack.PositionsApiBaseUrl = https://...
 ```
+
+Treat those outputs as deployment targets rather than the long-term consumer addresses. After deploy, update your public hostnames so clients can continue using `mqtt.goneepic.com` and `api.goneepic.com`.
 
 Use any MQTT client to connect with credentials from `config.json`, for example with `mosquitto_pub`:
 
 ```bash
 # Send a message
-mosquitto_pub -h 1.2.3.4 -t test/hello -m "Hello MQTT" -u meshdev -P large4cats
+mosquitto_pub -h mqtt.goneepic.com -t test/hello -m "Hello MQTT" -u meshdev -P large4cats
 
 # Subscribe to all topics
-mosquitto_sub -h 1.2.3.4 -t '#' -v -u meshdev -P large4cats
+mosquitto_sub -h mqtt.goneepic.com -t '#' -v -u meshdev -P large4cats
 ```
 
 > **Note:** For production use, restrict the SSH security-group rule to your own IP, enable TLS on port 8883, and disable anonymous access in `/etc/mosquitto/conf.d/default.conf`.
