@@ -6,8 +6,6 @@ Machine-readable spec: [positions-api.openapi.yaml](./positions-api.openapi.yaml
 
 Interactive Swagger UI: [docs/swagger.html](/workspaces/MQTT_CDK/docs/swagger.html)
 
-If you enable GitHub Pages from the `docs/` folder, the Swagger page can be shared as a rendered API browser.
-
 ## Base URL
 
 Use `https://api.goneepic.com/` as the default consumer URL.
