@@ -5,7 +5,8 @@
   },
   "ingest": {
     "allowedChannel": "ANZ",
-    "logLevel": "INFO"
+    "logLevel": "INFO",
+    "publishTopic": "squiggly"
   },
   "api": {
     "key": "replace-with-strong-api-key",

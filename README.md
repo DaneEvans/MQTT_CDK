@@ -112,7 +112,8 @@ Set MQTT credentials and channel filter in `config.json`:
     "password": "large4cats"
   },
   "ingest": {
-    "allowedChannel": "ANZ"
+    "allowedChannel": "ANZ",
+    "publishTopic": "squiggly"
   },
   "api": {
     "key": "replace-with-strong-api-key"
@@ -122,8 +123,10 @@ Set MQTT credentials and channel filter in `config.json`:
 
 Only packets from `ingest.allowedChannel` are considered for storage.
 The ingest worker stores only packets it can parse as JSON position data.
+After each stored position update, the worker republishes an endpoint-shaped JSON payload (including `shortname` and `longname` when present) to `ingest.publishTopic`.
 
 `ingest.logLevel` controls worker verbosity (`INFO` recommended, `DEBUG` for deep troubleshooting).
+`ingest.publishTopic` controls where enriched position updates are emitted (default `squiggly`).
 
 ---
 
