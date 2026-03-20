@@ -10,7 +10,7 @@ A TypeScript AWS CDK project that provisions a small EC2 instance with a fixed E
 | **EC2 instance**    | `t3.micro`, Amazon Linux 2                                                                    |
 | **Elastic IP**      | Fixed public IP address attached to the instance                                              |
 | **Security group**  | Inbound: SSH (22), MQTT (1883), MQTT-TLS (8883)                                               |
-| **Mosquitto**       | Installed via EPEL (`amazon-linux-extras` + `yum`), listening on port 1883 (anonymous mode)   |
+| **Mosquitto**       | Installed via EPEL (`amazon-linux-extras` + `yum`), authenticated listeners on 1883 (public) and 1884 (localhost only) |
 | **Ingest worker**   | Python systemd service on EC2; filters one channel and stores only latest position per sender |
 | **DynamoDB**        | `PAY_PER_REQUEST` table keyed by `senderId` for latest position records                       |
 | **API Gateway API** | Serverless GET endpoints for keys, all latest positions, and position-by-sender               |
@@ -108,8 +108,18 @@ Set MQTT credentials and channel filter in `config.json`:
 ```json
 {
   "mqtt": {
-    "username": "meshdev",
-    "password": "large4cats"
+    "squigglyConsumer": {
+      "username": "meshdev",
+      "password": "large4cats"
+    },
+    "uploader": {
+      "username": "mqtt-uploader",
+      "password": "replace-with-strong-mqtt-uploader-password"
+    },
+    "squigglyUploader": {
+      "username": "squiggly-uploader",
+      "password": "replace-with-strong-squiggly-uploader-password"
+    }
   },
   "ingest": {
     "allowedChannel": "ANZ",
@@ -120,6 +130,12 @@ Set MQTT credentials and channel filter in `config.json`:
   }
 }
 ```
+
+MQTT users are split by role:
+
+- `mqtt.squigglyConsumer.username` / `mqtt.squigglyConsumer.password` is the squiggly consumer account on the public listener (`1883`), and can only read `squiggly` topics.
+- `mqtt.uploader` can publish to public-listener topics. Note: on Amazon Linux 2 (Mosquitto 1.6), ACL `deny` is unavailable, so strict "all except squiggly" enforcement requires Mosquitto 2.x.
+- `mqtt.squigglyUploader` is only used by the EC2-local ingest service on localhost listener `1884`; it can read `msh/#` and publish `squiggly`.
 
 Only packets from `ingest.allowedChannel` are considered for storage.
 The ingest worker stores only packets it can parse as JSON position data.
@@ -223,7 +239,7 @@ Suggested verification:
 dig +short mqtt.goneepic.com
 dig +short api.goneepic.com
 curl -H "x-api-key: <your-api-key>" "https://api.goneepic.com/testAuth"
-mosquitto_sub -h mqtt.goneepic.com -t '#' -v -u meshdev -P large4cats
+mosquitto_sub -h mqtt.goneepic.com -t 'squiggly/#' -v -u meshdev -P large4cats
 ```
 
 ---
@@ -274,11 +290,11 @@ Treat the MQTT output as a deployment target behind `mqtt.goneepic.com`. The API
 Use any MQTT client to connect with credentials from `config.json`, for example with `mosquitto_pub`:
 
 ```bash
-# Send a message
-mosquitto_pub -h mqtt.goneepic.com -t test/hello -m "Hello MQTT" -u meshdev -P large4cats
+# Public uploader (broad publish permissions on Mosquitto 1.6)
+mosquitto_pub -h mqtt.goneepic.com -t test/hello -m "Hello MQTT" -u mqtt-uploader -P <mqtt-uploader-password>
 
-# Subscribe to all topics
-mosquitto_sub -h mqtt.goneepic.com -t '#' -v -u meshdev -P large4cats
+# Squiggly consumer (existing user)
+mosquitto_sub -h mqtt.goneepic.com -t 'squiggly/#' -v -u meshdev -P large4cats
 ```
 
 > **Note:** For production use, restrict the SSH security-group rule to your own IP, enable TLS on port 8883, and disable anonymous access in `/etc/mosquitto/conf.d/default.conf`.
@@ -289,14 +305,14 @@ using mosquitto
 To subscribe (everything)
 
 ```
-mosquitto_sub -h 54.252.83.244 -t '#' -v -u meshdev -P large4cats
+mosquitto_sub -h 54.252.83.244 -t 'squiggly/#' -v -u meshdev -P large4cats
 ```
 
 Meshtastic settings:
 MQTT enabled - true
 Address - <ip address>:1883
-username - 'meshdev'
-pwd - 'large4cats'
+username - 'mqtt-uploader'
+pwd - '<mqtt-uploader-password>'
 
 Meshtastic seems to connect to it fine, but it appears to be in a binary format, but the text is visible within it. It doesn't want to forward other nodes packets yet - trying moving it to a router_late to fix that ??
 Nope, not that. Need 'Settings - Lora - Ok to MQTT' on the sending device.

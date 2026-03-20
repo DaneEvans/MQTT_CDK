@@ -25,8 +25,19 @@ export class MqttCdkStack extends cdk.Stack {
     // ── Load MQTT credentials from config ──────────────────────────────────
     const configPath = path.join(__dirname, "..", "config.json");
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-    const mqttUsername = config.mqtt?.username || "meshdev";
-    const mqttPassword = config.mqtt?.password || "large4cats";
+    const squigglyConsumerUsername =
+      config.mqtt?.squigglyConsumer?.username || "meshdev";
+    const squigglyConsumerPassword =
+      config.mqtt?.squigglyConsumer?.password || "large4cats";
+    const mqttUploaderUsername =
+      config.mqtt?.uploader?.username || "mqtt-uploader";
+    const mqttUploaderPassword =
+      config.mqtt?.uploader?.password || "replace-mqtt-uploader-password";
+    const squigglyUploaderUsername =
+      config.mqtt?.squigglyUploader?.username || "squiggly-uploader";
+    const squigglyUploaderPassword =
+      config.mqtt?.squigglyUploader?.password ||
+      "replace-squiggly-uploader-password";
     const allowedChannel = config.ingest?.allowedChannel || "ANZ";
     const ingestLogLevel = config.ingest?.logLevel || "INFO";
     const publishTopic = (config.ingest?.publishTopic || "squiggly").trim();
@@ -208,22 +219,46 @@ export class MqttCdkStack extends cdk.Stack {
       "python3 -m pip install 'paho-mqtt==1.6.1' boto3",
       // Stop mosquitto if it auto-started
       "systemctl stop mosquitto || true",
-      // Create password file for mosquitto
-      `mosquitto_passwd -c -b /etc/mosquitto/passwd ${mqttUsername} ${mqttPassword}`,
+      // Create password files for mosquitto users
+      `mosquitto_passwd -c -b /etc/mosquitto/passwd-public ${mqttUploaderUsername} ${mqttUploaderPassword}`,
+      `mosquitto_passwd -b /etc/mosquitto/passwd-public ${squigglyConsumerUsername} ${squigglyConsumerPassword}`,
+      `mosquitto_passwd -c -b /etc/mosquitto/passwd-internal ${squigglyUploaderUsername} ${squigglyUploaderPassword}`,
+      // Public listener ACLs for Mosquitto 1.6 (AL2 package). This version does
+      // not support ACL 'deny' entries.
+      "cat > /etc/mosquitto/acl-public <<EOF",
+      `user ${mqttUploaderUsername}`,
+      "topic write #",
+      `user ${squigglyConsumerUsername}`,
+      "topic read squiggly",
+      "topic read squiggly/#",
+      "EOF",
+      // Internal listener ACLs: only local squiggly uploader can read mesh topics and publish squiggly.
+      "cat > /etc/mosquitto/acl-internal <<EOF",
+      `user ${squigglyUploaderUsername}`,
+      "topic read msh/#",
+      "topic write squiggly",
+      "topic write squiggly/#",
+      "EOF",
       // Ensure required directories exist
       "mkdir -p /var/lib/mosquitto",
-      // Configure mosquitto to require authentication
+      // Configure mosquitto to require authentication and per-listener ACLs
       "cat > /etc/mosquitto/mosquitto.conf <<'EOF'",
       "pid_file /var/run/mosquitto.pid",
       "persistence true",
       "persistence_location /var/lib/mosquitto/",
       "log_dest syslog",
+      "per_listener_settings true",
       "listener 1883 0.0.0.0",
       "allow_anonymous false",
-      "password_file /etc/mosquitto/passwd",
+      "password_file /etc/mosquitto/passwd-public",
+      "acl_file /etc/mosquitto/acl-public",
+      "listener 1884 127.0.0.1",
+      "allow_anonymous false",
+      "password_file /etc/mosquitto/passwd-internal",
+      "acl_file /etc/mosquitto/acl-internal",
       "EOF",
-      "chown mosquitto:mosquitto /etc/mosquitto/passwd /var/lib/mosquitto || true",
-      "chmod 640 /etc/mosquitto/passwd",
+      "chown mosquitto:mosquitto /etc/mosquitto/passwd-public /etc/mosquitto/passwd-internal /etc/mosquitto/acl-public /etc/mosquitto/acl-internal /var/lib/mosquitto || true",
+      "chmod 640 /etc/mosquitto/passwd-public /etc/mosquitto/passwd-internal /etc/mosquitto/acl-public /etc/mosquitto/acl-internal",
       // Enable and start the service
       "systemctl enable mosquitto",
       "systemctl restart mosquitto",
@@ -247,9 +282,9 @@ export class MqttCdkStack extends cdk.Stack {
       "[Service]",
       "Type=simple",
       "Environment=MQTT_HOST=127.0.0.1",
-      "Environment=MQTT_PORT=1883",
-      `Environment=MQTT_USERNAME=${mqttUsername}`,
-      `Environment=MQTT_PASSWORD=${mqttPassword}`,
+      "Environment=MQTT_PORT=1884",
+      `Environment=MQTT_USERNAME=${squigglyUploaderUsername}`,
+      `Environment=MQTT_PASSWORD=${squigglyUploaderPassword}`,
       `Environment=TABLE_NAME=${positionsTable.tableName}`,
       `Environment=ALLOWED_CHANNEL=${allowedChannel}`,
       `Environment=PUBLISH_TOPIC=${publishTopic}`,
@@ -337,9 +372,17 @@ export class MqttCdkStack extends cdk.Stack {
       ]),
       description: "How to open a shell on the broker instance",
     });
-    new cdk.CfnOutput(this, "MqttUsername", {
-      value: mqttUsername,
-      description: "MQTT broker username",
+    new cdk.CfnOutput(this, "MqttSquigglyConsumerUsername", {
+      value: squigglyConsumerUsername,
+      description: "Existing squiggly consumer username (public listener)",
+    });
+    new cdk.CfnOutput(this, "MqttUploaderUsername", {
+      value: mqttUploaderUsername,
+      description: "MQTT uploader username (public listener)",
+    });
+    new cdk.CfnOutput(this, "MqttSquigglyUploaderUsername", {
+      value: squigglyUploaderUsername,
+      description: "EC2-local squiggly uploader username (internal listener)",
     });
     new cdk.CfnOutput(this, "AllowedChannel", {
       value: allowedChannel,
