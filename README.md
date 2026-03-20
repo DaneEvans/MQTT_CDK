@@ -7,10 +7,10 @@ A TypeScript AWS CDK project that provisions a small EC2 instance with a fixed E
 | Resource            | Details                                                                                       |
 | ------------------- | --------------------------------------------------------------------------------------------- |
 | **VPC**             | Single-AZ public VPC (no NAT gateway)                                                         |
-| **EC2 instance**    | `t3.micro`, Amazon Linux 2                                                                    |
+| **EC2 instance**    | `t3.micro`, Ubuntu 22.04 LTS                                                                  |
 | **Elastic IP**      | Fixed public IP address attached to the instance                                              |
 | **Security group**  | Inbound: SSH (22), MQTT (1883), MQTT-TLS (8883)                                               |
-| **Mosquitto**       | Installed via EPEL (`amazon-linux-extras` + `yum`), authenticated listeners on 1883 (public) and 1884 (localhost only) |
+| **Mosquitto**       | Installed via apt (v2.x), authenticated listeners on 1883 (public) and 1884 (localhost only)  |
 | **Ingest worker**   | Python systemd service on EC2; filters one channel and stores only latest position per sender |
 | **DynamoDB**        | `PAY_PER_REQUEST` table keyed by `senderId` for latest position records                       |
 | **API Gateway API** | Serverless GET endpoints for keys, all latest positions, and position-by-sender               |
@@ -119,6 +119,10 @@ Set MQTT credentials and channel filter in `config.json`:
     "squigglyUploader": {
       "username": "squiggly-uploader",
       "password": "replace-with-strong-squiggly-uploader-password"
+    },
+    "meshadmin": {
+      "username": "meshadmin",
+      "password": "replace-with-strong-meshadmin-password"
     }
   },
   "ingest": {
@@ -134,8 +138,9 @@ Set MQTT credentials and channel filter in `config.json`:
 MQTT users are split by role:
 
 - `mqtt.squigglyConsumer.username` / `mqtt.squigglyConsumer.password` is the squiggly consumer account on the public listener (`1883`), and can only read `squiggly` topics.
-- `mqtt.uploader` can publish to public-listener topics. Note: on Amazon Linux 2 (Mosquitto 1.6), ACL `deny` is unavailable, so strict "all except squiggly" enforcement requires Mosquitto 2.x.
+- `mqtt.uploader` can publish to all public-listener topics except `squiggly`.
 - `mqtt.squigglyUploader` is only used by the EC2-local ingest service on localhost listener `1884`; it can read `msh/#` and publish `squiggly`.
+- `mqtt.meshadmin` has full read/write access on all topics.
 
 Only packets from `ingest.allowedChannel` are considered for storage.
 The ingest worker stores only packets it can parse as JSON position data.
@@ -264,6 +269,13 @@ If you are not seeing stored positions, look for:
 - high `filtered_channel` counts (wrong channel)
 - `missing_position` / `missing_sender`
 
+During first boot, cloud-init now runs a broker startup self-check. If Mosquitto fails to parse config or load ACL/password files, inspect:
+
+```bash
+sudo cat /var/log/mosquitto-selfcheck.log
+sudo tail -n 200 /var/log/cloud-init-output.log
+```
+
 For Lambda API logs (CloudWatch), use the stack output `PositionsApiTailCommand` or run:
 
 ```bash
@@ -290,7 +302,7 @@ Treat the MQTT output as a deployment target behind `mqtt.goneepic.com`. The API
 Use any MQTT client to connect with credentials from `config.json`, for example with `mosquitto_pub`:
 
 ```bash
-# Public uploader (broad publish permissions on Mosquitto 1.6)
+# Public uploader (allowed to publish everything except squiggly)
 mosquitto_pub -h mqtt.goneepic.com -t test/hello -m "Hello MQTT" -u mqtt-uploader -P <mqtt-uploader-password>
 
 # Squiggly consumer (existing user)

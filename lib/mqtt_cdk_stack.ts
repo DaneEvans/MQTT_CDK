@@ -38,6 +38,9 @@ export class MqttCdkStack extends cdk.Stack {
     const squigglyUploaderPassword =
       config.mqtt?.squigglyUploader?.password ||
       "replace-squiggly-uploader-password";
+    const meshAdminUsername = config.mqtt?.meshadmin?.username || "meshadmin";
+    const meshAdminPassword =
+      config.mqtt?.meshadmin?.password || "replace-meshadmin-password";
     const allowedChannel = config.ingest?.allowedChannel || "ANZ";
     const ingestLogLevel = config.ingest?.logLevel || "INFO";
     const publishTopic = (config.ingest?.publishTopic || "squiggly").trim();
@@ -180,16 +183,10 @@ export class MqttCdkStack extends cdk.Stack {
     // ── Security group ──────────────────────────────────────────────────────
     const sg = new ec2.SecurityGroup(this, "MqttSg", {
       vpc,
-      description: "Allow MQTT (1883) and SSH (22) inbound",
+      description: "Allow MQTT (1883) inbound",
       allowAllOutbound: true,
     });
 
-    // SSH – open for EC2 Instance Connect; restrict to your own IP in production if preferred
-    sg.addIngressRule(
-      ec2.Peer.anyIpv4(),
-      ec2.Port.tcp(22),
-      "SSH / EC2 Instance Connect",
-    );
     // MQTT plain-text
     sg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(1883), "MQTT");
     // MQTT over TLS (optional, useful for future use)
@@ -209,28 +206,37 @@ export class MqttCdkStack extends cdk.Stack {
     // ── User data – install & start Mosquitto ───────────────────────────────
     const userData = ec2.UserData.forLinux();
     userData.addCommands(
-      // Update packages
-      "yum update -y",
-      // Enable EPEL and install mosquitto
-      "amazon-linux-extras install epel -y",
-      "yum install -y mosquitto",
-      "yum install -y python3 python3-pip",
-      "python3 -m pip install --upgrade pip",
-      "python3 -m pip install 'paho-mqtt==1.6.1' boto3",
+      "set -e",
+      "export DEBIAN_FRONTEND=noninteractive",
+      // Retry helper for apt/network flakiness during first boot.
+      'retry() { n=0; until [ "$n" -ge 5 ]; do "$@" && return 0; n=$((n+1)); sleep 10; done; return 1; }',
+      // Install broker and Python deps from Ubuntu repos.
+      "retry apt-get update -y",
+      "retry apt-get install -y mosquitto mosquitto-clients python3 python3-pip",
+      // Keep Mosquitto setup independent from optional Python package naming differences.
+      "apt-get install -y python3-boto3 python3-paho-mqtt || python3 -m pip install --no-cache-dir boto3 paho-mqtt",
+      // Fail fast if expected binaries are missing.
+      "command -v mosquitto",
+      "command -v mosquitto_passwd",
       // Stop mosquitto if it auto-started
       "systemctl stop mosquitto || true",
       // Create password files for mosquitto users
       `mosquitto_passwd -c -b /etc/mosquitto/passwd-public ${mqttUploaderUsername} ${mqttUploaderPassword}`,
       `mosquitto_passwd -b /etc/mosquitto/passwd-public ${squigglyConsumerUsername} ${squigglyConsumerPassword}`,
+      `mosquitto_passwd -b /etc/mosquitto/passwd-public ${meshAdminUsername} ${meshAdminPassword}`,
       `mosquitto_passwd -c -b /etc/mosquitto/passwd-internal ${squigglyUploaderUsername} ${squigglyUploaderPassword}`,
-      // Public listener ACLs for Mosquitto 1.6 (AL2 package). This version does
-      // not support ACL 'deny' entries.
+      `mosquitto_passwd -b /etc/mosquitto/passwd-internal ${meshAdminUsername} ${meshAdminPassword}`,
+      // Public listener ACLs: external uploader can publish everything except squiggly.
       "cat > /etc/mosquitto/acl-public <<EOF",
       `user ${mqttUploaderUsername}`,
+      "topic deny squiggly",
+      "topic deny squiggly/#",
       "topic write #",
       `user ${squigglyConsumerUsername}`,
       "topic read squiggly",
       "topic read squiggly/#",
+      `user ${meshAdminUsername}`,
+      "topic readwrite #",
       "EOF",
       // Internal listener ACLs: only local squiggly uploader can read mesh topics and publish squiggly.
       "cat > /etc/mosquitto/acl-internal <<EOF",
@@ -238,12 +244,13 @@ export class MqttCdkStack extends cdk.Stack {
       "topic read msh/#",
       "topic write squiggly",
       "topic write squiggly/#",
+      `user ${meshAdminUsername}`,
+      "topic readwrite #",
       "EOF",
       // Ensure required directories exist
       "mkdir -p /var/lib/mosquitto",
       // Configure mosquitto to require authentication and per-listener ACLs
       "cat > /etc/mosquitto/mosquitto.conf <<'EOF'",
-      "pid_file /var/run/mosquitto.pid",
       "persistence true",
       "persistence_location /var/lib/mosquitto/",
       "log_dest syslog",
@@ -257,11 +264,16 @@ export class MqttCdkStack extends cdk.Stack {
       "password_file /etc/mosquitto/passwd-internal",
       "acl_file /etc/mosquitto/acl-internal",
       "EOF",
+      // Self-check: start broker in foreground briefly to validate config.
+      // timeout exit code 124 means the process stayed up long enough to pass.
+      'bash -lc \'timeout 3 mosquitto -c /etc/mosquitto/mosquitto.conf -v >/var/log/mosquitto-selfcheck.log 2>&1; rc=$?; if [ "$rc" -ne 124 ]; then echo "mosquitto self-check failed rc=$rc"; cat /var/log/mosquitto-selfcheck.log; exit 1; fi\'',
       "chown mosquitto:mosquitto /etc/mosquitto/passwd-public /etc/mosquitto/passwd-internal /etc/mosquitto/acl-public /etc/mosquitto/acl-internal /var/lib/mosquitto || true",
       "chmod 640 /etc/mosquitto/passwd-public /etc/mosquitto/passwd-internal /etc/mosquitto/acl-public /etc/mosquitto/acl-internal",
       // Enable and start the service
       "systemctl enable mosquitto",
       "systemctl restart mosquitto",
+      // Surface startup failures directly in cloud-init output.
+      "systemctl --no-pager --full status mosquitto || (journalctl -u mosquitto --no-pager -n 200; exit 1)",
       // Install MQTT -> DynamoDB ingest worker
       "cat > /opt/mqtt_ingest.py <<'PYEOF'",
       ...fs
@@ -309,7 +321,9 @@ export class MqttCdkStack extends cdk.Stack {
         ec2.InstanceClass.T3,
         ec2.InstanceSize.MICRO,
       ),
-      machineImage: ec2.MachineImage.latestAmazonLinux2(),
+      machineImage: ec2.MachineImage.fromSsmParameter(
+        "/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id",
+      ),
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
       securityGroup: sg,
@@ -337,14 +351,6 @@ export class MqttCdkStack extends cdk.Stack {
       value: cdk.Fn.join("", ["mqtt://", eip.ref, ":1883"]),
       description: "MQTT broker endpoint",
     });
-    new cdk.CfnOutput(this, "VerifyMosquittoSSH", {
-      value: cdk.Fn.join("", [
-        "ssh -i <your-key.pem> ec2-user@",
-        eip.ref,
-        " 'sudo systemctl status mosquitto'",
-      ]),
-      description: "SSH command to verify mosquitto is running",
-    });
     new cdk.CfnOutput(this, "VerifyMosquittoSSM", {
       value: cdk.Fn.join("", [
         "aws ssm start-session --target ",
@@ -357,7 +363,7 @@ export class MqttCdkStack extends cdk.Stack {
     new cdk.CfnOutput(this, "CloudInitLogs", {
       value: "sudo tail -f /var/log/cloud-init-output.log",
       description:
-        "Command to check installation logs on the instance (SSH or SSM)",
+        "Command to check installation logs on the instance over SSM",
     });
     new cdk.CfnOutput(this, "IngestServiceLogs", {
       value: "sudo journalctl -u mqtt-ingest -f --no-pager",
@@ -365,8 +371,7 @@ export class MqttCdkStack extends cdk.Stack {
     });
     new cdk.CfnOutput(this, "ConnectHint", {
       value: cdk.Fn.join("", [
-        'EC2 Console → select instance → Connect → "Session Manager" tab (no SSH needed), ',
-        'or "EC2 Instance Connect" tab (uses the SSH port now open), ',
+        'EC2 Console → select instance → Connect → "Session Manager" tab, ',
         "or: aws ssm start-session --target ",
         instance.instanceId,
       ]),
@@ -383,6 +388,10 @@ export class MqttCdkStack extends cdk.Stack {
     new cdk.CfnOutput(this, "MqttSquigglyUploaderUsername", {
       value: squigglyUploaderUsername,
       description: "EC2-local squiggly uploader username (internal listener)",
+    });
+    new cdk.CfnOutput(this, "MqttMeshadminUsername", {
+      value: meshAdminUsername,
+      description: "Admin MQTT username with full read/write permissions",
     });
     new cdk.CfnOutput(this, "AllowedChannel", {
       value: allowedChannel,

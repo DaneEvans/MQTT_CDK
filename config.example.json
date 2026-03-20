@@ -11,6 +11,10 @@
     "squigglyUploader": {
       "username": "squiggly-uploader",
       "password": "replace-with-strong-squiggly-uploader-password"
+    },
+    "meshadmin": {
+      "username": "meshadmin",
+      "password": "replace-with-strong-meshadmin-password"
     }
   },
   "ingest": {
