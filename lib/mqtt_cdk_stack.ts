@@ -4,6 +4,10 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
+import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
+import * as cloudwatchActions from "aws-cdk-lib/aws-cloudwatch-actions";
+import * as sns from "aws-cdk-lib/aws-sns";
+import * as subscriptions from "aws-cdk-lib/aws-sns-subscriptions";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import { Construct } from "constructs";
@@ -77,6 +81,39 @@ export class MqttCdkStack extends cdk.Stack {
       retention: logs.RetentionDays.ONE_MONTH,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
+    const cloudInitInstanceLogGroup = new logs.LogGroup(
+      this,
+      "CloudInitInstanceLogGroup",
+      {
+        logGroupName: "/mqtt/ec2/cloud-init-output",
+        retention: logs.RetentionDays.ONE_MONTH,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+      },
+    );
+    const syslogInstanceLogGroup = new logs.LogGroup(
+      this,
+      "SyslogInstanceLogGroup",
+      {
+        logGroupName: "/mqtt/ec2/syslog",
+        retention: logs.RetentionDays.ONE_MONTH,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+      },
+    );
+    const mosquittoSelfCheckLogGroup = new logs.LogGroup(
+      this,
+      "MosquittoSelfCheckLogGroup",
+      {
+        logGroupName: "/mqtt/ec2/mosquitto-selfcheck",
+        retention: logs.RetentionDays.ONE_MONTH,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+      },
+    );
+    const alarmTopic = new sns.Topic(this, "MqttAlarmTopic", {
+      displayName: "MQTT broker alarms",
+    });
+    alarmTopic.addSubscription(
+      new subscriptions.EmailSubscription("dane@goneepic.com"),
+    );
 
     const positionsApiFn = new lambda.Function(this, "PositionsApiFunction", {
       functionName: apiFunctionName,
@@ -201,6 +238,9 @@ export class MqttCdkStack extends cdk.Stack {
         "AmazonSSMManagedInstanceCore",
       ),
     );
+    role.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName("CloudWatchAgentServerPolicy"),
+    );
     positionsTable.grantWriteData(role);
 
     // ── User data – install & start Mosquitto ───────────────────────────────
@@ -212,7 +252,10 @@ export class MqttCdkStack extends cdk.Stack {
       'retry() { n=0; until [ "$n" -ge 5 ]; do "$@" && return 0; n=$((n+1)); sleep 10; done; return 1; }',
       // Install broker and Python deps from Ubuntu repos.
       "retry apt-get update -y",
-      "retry apt-get install -y mosquitto mosquitto-clients python3 python3-pip",
+      "retry apt-get install -y mosquitto mosquitto-clients python3 python3-pip wget",
+      // Install CloudWatch agent for host log shipping.
+      "wget -q https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb -O /tmp/amazon-cloudwatch-agent.deb",
+      "dpkg -i /tmp/amazon-cloudwatch-agent.deb",
       // Keep Mosquitto setup independent from optional Python package naming differences.
       "apt-get install -y python3-boto3 python3-paho-mqtt || python3 -m pip install --no-cache-dir boto3 paho-mqtt",
       // Fail fast if expected binaries are missing.
@@ -313,6 +356,42 @@ export class MqttCdkStack extends cdk.Stack {
       "systemctl daemon-reload",
       "systemctl enable mqtt-ingest",
       "systemctl restart mqtt-ingest",
+      // Ship instance logs to CloudWatch for EC2-level troubleshooting.
+      "mkdir -p /opt/aws/amazon-cloudwatch-agent/etc",
+      "cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'EOF'",
+      "{",
+      '  "agent": {',
+      '    "run_as_user": "root"',
+      "  },",
+      '  "logs": {',
+      '    "logs_collected": {',
+      '      "files": {',
+      '        "collect_list": [',
+      "          {",
+      '            "file_path": "/var/log/cloud-init-output.log",',
+      `            "log_group_name": "${cloudInitInstanceLogGroup.logGroupName}",`,
+      '            "log_stream_name": "{instance_id}",',
+      '            "timezone": "UTC"',
+      "          },",
+      "          {",
+      '            "file_path": "/var/log/syslog",',
+      `            "log_group_name": "${syslogInstanceLogGroup.logGroupName}",`,
+      '            "log_stream_name": "{instance_id}",',
+      '            "timezone": "UTC"',
+      "          },",
+      "          {",
+      '            "file_path": "/var/log/mosquitto-selfcheck.log",',
+      `            "log_group_name": "${mosquittoSelfCheckLogGroup.logGroupName}",`,
+      '            "log_stream_name": "{instance_id}",',
+      '            "timezone": "UTC"',
+      "          }",
+      "        ]",
+      "      }",
+      "    }",
+      "  }",
+      "}",
+      "EOF",
+      "/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s",
     );
 
     // ── EC2 instance ────────────────────────────────────────────────────────
@@ -329,11 +408,128 @@ export class MqttCdkStack extends cdk.Stack {
       securityGroup: sg,
       userData,
       role,
+      detailedMonitoring: true,
       // IMDSv2 required for better security
       requireImdsv2: true,
       // Force instance replacement when user data changes
       userDataCausesReplacement: true,
     });
+
+    const cpuCreditBalanceMetric = new cloudwatch.Metric({
+      namespace: "AWS/EC2",
+      metricName: "CPUCreditBalance",
+      dimensionsMap: { InstanceId: instance.instanceId },
+      statistic: "Minimum",
+      period: cdk.Duration.minutes(5),
+    });
+    const cpuUtilizationMetric = new cloudwatch.Metric({
+      namespace: "AWS/EC2",
+      metricName: "CPUUtilization",
+      dimensionsMap: { InstanceId: instance.instanceId },
+      statistic: "Average",
+      period: cdk.Duration.minutes(5),
+    });
+    const statusCheckFailedMetric = new cloudwatch.Metric({
+      namespace: "AWS/EC2",
+      metricName: "StatusCheckFailed",
+      dimensionsMap: { InstanceId: instance.instanceId },
+      statistic: "Maximum",
+      period: cdk.Duration.minutes(1),
+    });
+    const statusCheckFailedSystemMetric = new cloudwatch.Metric({
+      namespace: "AWS/EC2",
+      metricName: "StatusCheckFailed_System",
+      dimensionsMap: { InstanceId: instance.instanceId },
+      statistic: "Maximum",
+      period: cdk.Duration.minutes(1),
+    });
+    const statusCheckFailedInstanceMetric = new cloudwatch.Metric({
+      namespace: "AWS/EC2",
+      metricName: "StatusCheckFailed_Instance",
+      dimensionsMap: { InstanceId: instance.instanceId },
+      statistic: "Maximum",
+      period: cdk.Duration.minutes(1),
+    });
+
+    const ec2StatusCheckAlarm = new cloudwatch.Alarm(
+      this,
+      "Ec2StatusCheckAlarm",
+      {
+        alarmDescription: "EC2 instance failed one or more status checks",
+        metric: statusCheckFailedMetric,
+        threshold: 1,
+        evaluationPeriods: 2,
+        datapointsToAlarm: 2,
+        comparisonOperator:
+          cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      },
+    );
+    ec2StatusCheckAlarm.addAlarmAction(
+      new cloudwatchActions.SnsAction(alarmTopic),
+    );
+
+    const ec2SystemStatusCheckAlarm = new cloudwatch.Alarm(
+      this,
+      "Ec2SystemStatusCheckAlarm",
+      {
+        alarmDescription: "EC2 instance failed system-level status checks",
+        metric: statusCheckFailedSystemMetric,
+        threshold: 1,
+        evaluationPeriods: 2,
+        datapointsToAlarm: 2,
+        comparisonOperator:
+          cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      },
+    );
+    ec2SystemStatusCheckAlarm.addAlarmAction(
+      new cloudwatchActions.SnsAction(alarmTopic),
+    );
+
+    const ec2CpuHighAlarm = new cloudwatch.Alarm(this, "Ec2CpuHighAlarm", {
+      alarmDescription: "EC2 instance CPU is sustained above 80%",
+      metric: cpuUtilizationMetric,
+      threshold: 80,
+      evaluationPeriods: 3,
+      datapointsToAlarm: 3,
+      comparisonOperator:
+        cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+    });
+    ec2CpuHighAlarm.addAlarmAction(new cloudwatchActions.SnsAction(alarmTopic));
+
+    const ec2CpuCreditsLowAlarm = new cloudwatch.Alarm(
+      this,
+      "Ec2CpuCreditsLowAlarm",
+      {
+        alarmDescription: "EC2 t3 CPU credit balance is low",
+        metric: cpuCreditBalanceMetric,
+        threshold: 10,
+        evaluationPeriods: 3,
+        datapointsToAlarm: 3,
+        comparisonOperator:
+          cloudwatch.ComparisonOperator.LESS_THAN_OR_EQUAL_TO_THRESHOLD,
+      },
+    );
+    ec2CpuCreditsLowAlarm.addAlarmAction(
+      new cloudwatchActions.SnsAction(alarmTopic),
+    );
+
+    const ec2Dashboard = new cloudwatch.Dashboard(this, "MqttEc2Dashboard", {
+      dashboardName: `${cdk.Stack.of(this).stackName}-ec2`,
+    });
+    ec2Dashboard.addWidgets(
+      new cloudwatch.GraphWidget({
+        title: "EC2 Health Checks",
+        left: [
+          statusCheckFailedMetric,
+          statusCheckFailedSystemMetric,
+          statusCheckFailedInstanceMetric,
+        ],
+      }),
+      new cloudwatch.GraphWidget({
+        title: "EC2 CPU",
+        left: [cpuUtilizationMetric, cpuCreditBalanceMetric],
+      }),
+    );
 
     // ── Elastic IP (fixed public IP) ────────────────────────────────────────
     const eip = new ec2.CfnEIP(this, "MqttEip", { domain: "vpc" });
@@ -364,6 +560,27 @@ export class MqttCdkStack extends cdk.Stack {
       value: "sudo tail -f /var/log/cloud-init-output.log",
       description:
         "Command to check installation logs on the instance over SSM",
+    });
+    new cdk.CfnOutput(this, "Ec2AlarmTopicArn", {
+      value: alarmTopic.topicArn,
+      description: "SNS topic ARN used by EC2 health and utilization alarms",
+    });
+    new cdk.CfnOutput(this, "Ec2DashboardName", {
+      value: ec2Dashboard.dashboardName,
+      description: "CloudWatch dashboard with EC2 health and CPU metrics",
+    });
+    new cdk.CfnOutput(this, "Ec2CloudInitLogGroup", {
+      value: cloudInitInstanceLogGroup.logGroupName,
+      description:
+        "CloudWatch Logs group for cloud-init output from the EC2 broker",
+    });
+    new cdk.CfnOutput(this, "Ec2SyslogLogGroup", {
+      value: syslogInstanceLogGroup.logGroupName,
+      description: "CloudWatch Logs group for EC2 syslog entries",
+    });
+    new cdk.CfnOutput(this, "Ec2MosquittoSelfCheckLogGroup", {
+      value: mosquittoSelfCheckLogGroup.logGroupName,
+      description: "CloudWatch Logs group for Mosquitto self-check output",
     });
     new cdk.CfnOutput(this, "IngestServiceLogs", {
       value: "sudo journalctl -u mqtt-ingest -f --no-pager",
