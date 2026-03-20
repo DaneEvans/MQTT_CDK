@@ -1,7 +1,21 @@
 {
   "mqtt": {
-    "username": "meshdev",
-    "password": "large4cats"
+    "squigglyConsumer": {
+      "username": "meshdev",
+      "password": "large4cats"
+    },
+    "uploader": {
+      "username": "mqtt-uploader",
+      "password": "replace-with-strong-mqtt-uploader-password"
+    },
+    "squigglyUploader": {
+      "username": "squiggly-uploader",
+      "password": "replace-with-strong-squiggly-uploader-password"
+    },
+    "meshadmin": {
+      "username": "meshadmin",
+      "password": "replace-with-strong-meshadmin-password"
+    }
   },
   "ingest": {
     "allowedChannel": "ANZ",
